@@ -1,4 +1,4 @@
-// Stage 1 (ORB keypoint detection): original educational implementation.
+// Stages 1-2 (ORB detection and description): original educational implementation.
 // Algorithm references: Rublee et al., ORB, ICCV 2011; Rosten et al., FAST.
 
 #include "orb.h"
@@ -371,6 +371,165 @@ DetectionResult detect(const GrayImage& grayscale, const Config& config) {
                   return a.x < b.x;
               });
     return output;
+}
+
+
+namespace {
+
+constexpr int kPatchRadius = 15;
+constexpr int kDescriptorBits = 256;
+
+struct PatternPoint {
+    int x;
+    int y;
+};
+
+struct PatternPair {
+    PatternPoint a;
+    PatternPoint b;
+};
+
+// Fixed, reproducible sample pattern. The reference ORB implementation uses
+// its own learned pattern; this independent rBRIEF pattern is NOT bitwise
+// compatible with OpenCV descriptors, but is shared by every image in this V0.
+std::uint32_t nextRandom(std::uint32_t& state) {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    return state;
+}
+
+PatternPoint randomPoint(std::uint32_t& state) {
+    while (true) {
+        const int x = static_cast<int>(nextRandom(state) % 31u) - 15;
+        const int y = static_cast<int>(nextRandom(state) % 31u) - 15;
+        if (x * x + y * y <= kPatchRadius * kPatchRadius) {
+            return {x, y};
+        }
+    }
+}
+
+const std::array<PatternPair, kDescriptorBits>& briefPattern() {
+    static const auto pattern = [] {
+        std::array<PatternPair, kDescriptorBits> pairs{};
+        std::uint32_t state = 0xA5C31E27u;
+        for (int i = 0; i < kDescriptorBits; ++i) {
+            PatternPoint a, b;
+            do {
+                a = randomPoint(state);
+                b = randomPoint(state);
+            } while ((a.x - b.x) * (a.x - b.x) +
+                     (a.y - b.y) * (a.y - b.y) < 25);
+            pairs[static_cast<std::size_t>(i)] = {a, b};
+        }
+        return pairs;
+    }();
+    return pattern;
+}
+
+// m10 = sum(dx * intensity), m01 = sum(dy * intensity).
+// The denominator m00 cancels in atan2(m01/m00, m10/m00).
+float computeOrientation(const GrayImage& img, int cx, int cy) {
+    std::int64_t m10 = 0;
+    std::int64_t m01 = 0;
+    for (int dy = -kPatchRadius; dy <= kPatchRadius; ++dy) {
+        const int limit = static_cast<int>(std::floor(
+            std::sqrt(static_cast<double>(kPatchRadius * kPatchRadius - dy * dy))));
+        for (int dx = -limit; dx <= limit; ++dx) {
+            const int value = pixel(img, cx + dx, cy + dy);
+            m10 += static_cast<std::int64_t>(dx) * value;
+            m01 += static_cast<std::int64_t>(dy) * value;
+        }
+    }
+    // A truly symmetric patch has no preferred direction.
+    if (m10 == 0 && m01 == 0) return 0.0f;
+    return std::atan2(static_cast<float>(m01), static_cast<float>(m10));
+}
+
+Descriptor computeDescriptor(const GrayImage& blurred, int cx, int cy,
+                             float angle_rad) {
+    Descriptor descriptor;
+    const float cs = std::cos(angle_rad);
+    const float sn = std::sin(angle_rad);
+    const auto& pattern = briefPattern();
+
+    for (int i = 0; i < kDescriptorBits; ++i) {
+        const auto& pair = pattern[static_cast<std::size_t>(i)];
+        const int ax = static_cast<int>(std::lround(cs * pair.a.x - sn * pair.a.y));
+        const int ay = static_cast<int>(std::lround(sn * pair.a.x + cs * pair.a.y));
+        const int bx = static_cast<int>(std::lround(cs * pair.b.x - sn * pair.b.y));
+        const int by = static_cast<int>(std::lround(sn * pair.b.x + cs * pair.b.y));
+        const auto ia = pixel(blurred, cx + ax, cy + ay);
+        const auto ib = pixel(blurred, cx + bx, cy + by);
+        if (ia < ib) {
+            descriptor.bytes[static_cast<std::size_t>(i / 8)] |=
+                static_cast<std::uint8_t>(1u << (i % 8));
+        }
+    }
+    return descriptor;
+}
+
+// Reject malformed external inputs, rather than risk going outside the patch.
+std::pair<int, int> keypointInLevel(const Keypoint& kp,
+                                    const PyramidLevel& level) {
+    validateImage(level.image);
+    if (!(level.scale > 0.0f) || !std::isfinite(level.scale) ||
+        !std::isfinite(kp.x) || !std::isfinite(kp.y)) {
+        throw std::invalid_argument("Invalid keypoint or pyramid scale");
+    }
+    const double x = static_cast<double>(kp.x) / level.scale;
+    const double y = static_cast<double>(kp.y) / level.scale;
+    if (x < kPatchRadius + 1 || y < kPatchRadius + 1 ||
+        x >= level.image.width - kPatchRadius - 1 ||
+        y >= level.image.height - kPatchRadius - 1) {
+        throw std::out_of_range("Keypoint is too close to the image boundary");
+    }
+    const int cx = static_cast<int>(std::lround(x));
+    const int cy = static_cast<int>(std::lround(y));
+    return {cx, cy};
+}
+
+} // namespace
+
+DescriptionResult describe(const DetectionResult& detection,
+                           const Config& config) {
+    if (config.patch_size != 31) {
+        throw std::invalid_argument("This rBRIEF implementation requires patch_size=31");
+    }
+    if (detection.pyramid.empty()) {
+        throw std::invalid_argument("DetectionResult must contain a pyramid");
+    }
+    DescriptionResult output;
+    output.keypoints = detection.keypoints;
+    output.descriptors.reserve(output.keypoints.size());
+    if (output.keypoints.empty()) return output;
+
+    // One smoothed image per occupied octave; reuse it across descriptors.
+    std::vector<GrayImage> blurred(detection.pyramid.size());
+    std::vector<bool> built(detection.pyramid.size(), false);
+
+    for (auto& kp : output.keypoints) {
+        if (kp.octave < 0 ||
+            static_cast<std::size_t>(kp.octave) >= detection.pyramid.size()) {
+            throw std::out_of_range("Keypoint has invalid octave");
+        }
+        const std::size_t octave = static_cast<std::size_t>(kp.octave);
+        const auto& level = detection.pyramid[octave];
+        const auto [cx, cy] = keypointInLevel(kp, level);
+        if (!built[octave]) {
+            blurred[octave] = blur5x5(level.image);
+            built[octave] = true;
+        }
+        kp.angle_rad = computeOrientation(level.image, cx, cy);
+        output.descriptors.push_back(computeDescriptor(
+            blurred[octave], cx, cy, kp.angle_rad));
+    }
+    return output;
+}
+
+DescriptionResult extract(const GrayImage& grayscale, const Config& config) {
+    auto detection = detect(grayscale, config);
+    return describe(detection, config);
 }
 
 } // namespace stitching::orb
