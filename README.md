@@ -156,7 +156,7 @@ clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 \
     tests/test_s3_s4.cpp src/orb.cpp src/match_homography.cpp \
     -o tests/test_s3_s4
 
-./tests/test_s3_s4   # -> 100/100 test cases passed, 1419/1419 assertions passed (0 failed, 0 blocked)
+./tests/test_s3_s4   # -> 101/101 test cases passed, 1539/1539 assertions passed (0 failed, 0 blocked)
 
 # With AddressSanitizer and UndefinedBehaviorSanitizer:
 clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O1 \
@@ -164,33 +164,66 @@ clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O1 \
     tests/test_s3_s4.cpp src/orb.cpp src/match_homography.cpp \
     -o tests/test_s3_s4_asan
 
-./tests/test_s3_s4_asan  # -> 100/100 passed, 0 memory leaks, 0 UB, clean exit
+./tests/test_s3_s4_asan  # -> 101/101 passed, 0 memory leaks, 0 UB, clean exit
 ```
 
 ---
 
 ## Integration Notes for S5–S6
 
-The handoff from S4 to S5 (Image Warping) requires:
+### Pipeline Handoff Code Example
+
+The handoff from S3 to S4, and from S4 to S5 (Image Warping) requires validating both intermediate results:
 
 ```cpp
 #include "src/match_homography.h"
 
-// 1. Run S3
-stitching::matching::MatchResult mr =
-    stitching::matching::match(desc_a, desc_b);
+// 1. Configure and run S3 (Feature Matching)
+stitching::matching::MatchingConfig matching_config;
+matching_config.ratio_threshold = 0.8f;   // Standard Lowe's ratio test threshold
+matching_config.cross_check = false;     // Mutual nearest neighbor filtering
 
-// 2. Run S4
-stitching::homography::HomographyResult hr =
-    stitching::homography::estimate(mr.matches, desc_a, desc_b);
-
-// 3. Check validity before using H
-if (!hr.valid) {
-    // hr.failure_reason and hr.error_message describe why.
+const auto mr = stitching::matching::match(desc_a, desc_b, matching_config);
+if (!mr.valid) {
+    // Handle matching failure (e.g. fewer than 2 descriptors in one image)
+    // Error description available in mr.error_message
     return;
 }
 
-// 4. Use H_B_to_A: x_A ~ hr.H * x_B
-// hr.H is a std::array<double, 9> in row-major order.
-// hr.inlier_mask[k] == true  ↔  mr.matches[k] is an inlier.
+// 2. Configure and run S4 (Homography Estimation)
+stitching::homography::HomographyConfig homography_config;
+homography_config.ransac_iterations = 2000;
+homography_config.reprojection_threshold = 3.0; // In pixels
+homography_config.min_inliers = 4;
+// Optional model confidence gate (default 0.0 = disabled):
+// If enabled by team agreement (e.g., 0.15), must be consistent across V0 and CUDA versions.
+homography_config.min_inlier_ratio = 0.0;
+
+const auto hr = stitching::homography::estimate(
+    mr.matches, desc_a, desc_b, homography_config);
+
+// 3. Mandatory validity check before using Homography
+if (!hr.valid) {
+    // hr.failure_reason (TooFewMatches, AllHypothesesFailed, TooFewInliers, etc.)
+    // hr.error_message describes the exact reason.
+    return;
+}
+
+// 4. Homography convention and usage in S5 Warping:
+// - Direction: H_B_to_A maps points from image B to image A: x_A ~ hr.H * x_B.
+// - Representation: hr.H is a std::array<double, 9> in row-major order:
+//     [ H[0] H[1] H[2] ]
+//     [ H[3] H[4] H[5] ]
+//     [ H[6] H[7] H[8] ]
+// - Inverse warping convention: to sample pixel values from image B onto the canvas of image A,
+//   compute x_B ~ inv(hr.H) * x_A and perform bilinear interpolation.
+// - Inlier correspondences: hr.inlier_mask[k] == true <=> mr.matches[k] is an inlier.
 ```
+
+### Model Confidence and Validation Notes
+
+- **Mathematical Validity vs. Visual Quality:** `hr.valid == true` guarantees that RANSAC found a mathematically consistent homography meeting the inlier threshold on the given features. It does not guarantee that the final stitched panorama will be visually seamless or free of parallax ghosting (which depends on scene planarity, parallax, and S5/S6 warping and blending).
+- **Confidence Gate (`min_inlier_ratio`):** By default `0.0` (disabled). If the team decides to enforce a minimum inlier ratio consensus threshold, the same value must be used consistently across V0 and CUDA implementations.
+- **Pipeline Configurations:**
+  - *Development Diagnostic Configuration (in `tests/test_s3_s4.cpp`):* Uses `max_features = 500`, `ratio_threshold = 0.75f`, RANSAC 2000 iterations to verify integration quickly (~10 ms per pair).
+  - *Official V0 Baseline Configuration:* Expected to use `max_features = 2000`, `ratio_threshold = 0.8f`, RANSAC 2000 iterations once finalized by the team. Diagnostic benchmarks should not be conflated with official baseline speedup benchmarks.

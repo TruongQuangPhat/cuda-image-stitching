@@ -78,6 +78,8 @@ static std::string g_status_message;
 #define EXPECT_NE(a, b)     EXPECT_TRUE((a) != (b))
 #define EXPECT_LT(a, b)     EXPECT_TRUE((a) < (b))
 #define EXPECT_LE(a, b)     EXPECT_TRUE((a) <= (b))
+#define EXPECT_GT(a, b)     EXPECT_TRUE((a) > (b))
+#define EXPECT_GE(a, b)     EXPECT_TRUE((a) >= (b))
 #define EXPECT_FALSE(expr)  EXPECT_TRUE(!(expr))
 #define EXPECT_NEAR(a, b, tol) \
     EXPECT_TRUE(std::abs(static_cast<double>(a) - static_cast<double>(b)) <= (tol))
@@ -1403,23 +1405,52 @@ void test_hom_refinement_fallback_when_refined_worse() {
 }
 
 void test_hom_huge_threshold_never_accepts_invalid_projection() {
-    std::cout << "  huge-threshold RANSAC: invalid projection never accepted as inlier (overflow guard)\n";
-    // 4 good correspondences matching identity:
+    std::cout << "  huge-threshold RANSAC: 5-correspondence fixture, invalid projection rejected\n";
+    // Construct a deterministic 5-correspondence problem:
+    // 4 anchor correspondences defining a projective homography:
+    //   H = [ -2,    0, 0
+    //          0,   -2, 0
+    //        -0.02,  0, 1 ]
+    // Homogeneous denominator: w = -0.02 * x_b + 1.
+    //
+    // Anchors in B:
+    //   (10, 10), (100, 10), (100, 100), (10, 100) -> none have x_b = 50.
+    // Ground-truth projection:
+    //   (10, 10)   -> w = 0.8  -> (-25, -25)
+    //   (100, 10)  -> w = -1.0 -> (200, 20)
+    //   (100, 100) -> w = -1.0 -> (200, 200)
+    //   (10, 100)  -> w = 0.8  -> (-25, -250)
+    //
+    // 5th correspondence:
+    //   x_b = 50, y_b = 50 -> w = -0.02 * 50 + 1 = 0 (line at infinity, invalid projection!).
+    //   x_a = 0, y_a = 0 (finite coordinates, passes standard input validation).
+    //
+    // When RANSAC evaluates the hypothesis formed by the 4 anchors, correspondence #4 has w = 0.
+    // In our implementation, projectInternal returns valid=false.
+    // With threshold = 3.0, 1e154, 1e200, and DBL_MAX:
+    // In the old buggy code, DBL_MAX * DBL_MAX = Inf <= Inf evaluated to true, marking correspondence #4
+    // as an inlier. In our corrected code, correspondence #4 is NEVER an inlier!
     orb::DescriptionResult da, db;
     std::vector<matching::Match> matches;
-    da.keypoints.push_back({10, 10, 1, 0, 0}); db.keypoints.push_back({10, 10, 1, 0, 0});
-    matches.push_back({0, 0, 0, 10});
-    da.keypoints.push_back({200, 10, 1, 0, 0}); db.keypoints.push_back({200, 10, 1, 0, 0});
-    matches.push_back({1, 1, 0, 10});
-    da.keypoints.push_back({200, 200, 1, 0, 0}); db.keypoints.push_back({200, 200, 1, 0, 0});
-    matches.push_back({2, 2, 0, 10});
-    da.keypoints.push_back({10, 200, 1, 0, 0}); db.keypoints.push_back({10, 200, 1, 0, 0});
-    matches.push_back({3, 3, 0, 10});
 
-    // Zero-denominator check on projection helper:
-    // w = 0*x + 1*y - 50 = 0 when y=50.
-    std::array<double, 9> H_zero_w = {1,0,0, 0,1,0, 0,1,-50};
-    const double err_zero_w = homography::reprojectionError(H_zero_w, 50.0, 50.0, 50.0, 50.0);
+    auto add_pt = [&](float xb, float yb, float xa, float ya, std::size_t idx) {
+        da.keypoints.push_back({xa, ya, 1.0f, 0.0f, 0});
+        db.keypoints.push_back({xb, yb, 1.0f, 0.0f, 0});
+        da.descriptors.push_back(orb::Descriptor{});
+        db.descriptors.push_back(orb::Descriptor{});
+        matches.push_back({idx, idx, 0, 10});
+    };
+
+    add_pt(10.0f, 10.0f, -25.0f, -25.0f, 0);
+    add_pt(100.0f, 10.0f, 200.0f, 20.0f, 1);
+    add_pt(100.0f, 100.0f, 200.0f, 200.0f, 2);
+    add_pt(10.0f, 100.0f, -25.0f, -250.0f, 3);
+    // 5th point has xb = 50 -> w = 0 under the true H
+    add_pt(50.0f, 50.0f, 0.0f, 0.0f, 4);
+
+    // Verify zero-denominator sentinel on public API helper as well:
+    std::array<double, 9> H_gt = {-2.0, 0.0, 0.0, 0.0, -2.0, 0.0, -0.02, 0.0, 1.0};
+    const double err_zero_w = homography::reprojectionError(H_gt, 50.0, 50.0, 0.0, 0.0);
     REQUIRE_TRUE(err_zero_w == std::numeric_limits<double>::max());
 
     const double huge_thresholds[] = {
@@ -1431,15 +1462,24 @@ void test_hom_huge_threshold_never_accepts_invalid_projection() {
 
     for (double th : huge_thresholds) {
         homography::HomographyConfig cfg;
-        cfg.random_seed = 42;
+        cfg.random_seed = 2; // With seed 2, iteration 0 samples exactly {0, 3, 2, 1}
+        cfg.ransac_iterations = 1;
         cfg.reprojection_threshold = th;
         const auto res = homography::estimate(matches, da, db, cfg);
         REQUIRE_TRUE(res.valid);
+        REQUIRE_TRUE(res.inlier_mask.size() == 5);
+        // The 4 valid anchors are inliers:
+        REQUIRE_TRUE(res.inlier_mask[0]);
+        REQUIRE_TRUE(res.inlier_mask[1]);
+        REQUIRE_TRUE(res.inlier_mask[2]);
+        REQUIRE_TRUE(res.inlier_mask[3]);
+        // The 5th correspondence (w = 0) MUST NEVER be an inlier:
+        REQUIRE_TRUE(!res.inlier_mask[4]);
         REQUIRE_TRUE(res.num_inliers == 4);
-        REQUIRE_TRUE(res.inlier_mask.size() == 4);
-        for (bool b : res.inlier_mask) REQUIRE_TRUE(b);
+        EXPECT_NEAR(res.inlier_ratio, 4.0 / 5.0, 1e-9);
         REQUIRE_TRUE(std::isfinite(res.mean_reprojection_error));
         REQUIRE_TRUE(std::isfinite(res.max_reprojection_error));
+        for (double v : res.H) REQUIRE_TRUE(std::isfinite(v));
     }
 }
 
@@ -2002,12 +2042,40 @@ static std::string writeTempCsv(const std::string& content,
     return path;
 }
 
-void test_metadata_parser_valid_12_rows() {
-    std::cout << "  Metadata CSV parser: current metadata.csv has 12 data rows\n";
+void test_metadata_parser_fixture_12_rows() {
+    std::cout << "  Metadata CSV parser: fixture with 12 rows parsed accurately\n";
+    // Construct a synthetic 12-row CSV fixture independent of the repository's dataset file.
+    std::string csv = "pair_id,resolution,prepared_a,prepared_b,extra_col\n";
+    for (int i = 0; i < 12; ++i) {
+        csv += "pair_" + std::to_string(i / 3) + ",res_" + std::to_string(i % 3) +
+               ",prepared/img_a_" + std::to_string(i) + ".jpg,prepared/img_b_" + std::to_string(i) + ".jpg,val\n";
+    }
+    const auto path = writeTempCsv(csv, "fixture_12_rows");
+    REQUIRE_TRUE(!path.empty());
+    const CsvParseResult meta = parseDatasetMetadata(path);
+    REQUIRE_TRUE(meta.error.empty());
+    EXPECT_EQ(static_cast<int>(meta.rows.size()), 12);
+    for (int i = 0; i < 12; ++i) {
+        EXPECT_TRUE(meta.rows[i].pair_id == "pair_" + std::to_string(i / 3));
+        EXPECT_TRUE(meta.rows[i].resolution == "res_" + std::to_string(i % 3));
+    }
+}
+
+void test_metadata_parser_current_file_valid() {
+    std::cout << "  Metadata CSV parser: repository metadata.csv is valid (dynamic row count)\n";
     const CsvParseResult meta =
         parseDatasetMetadata(repoRoot() + "/dataset/metadata.csv");
     REQUIRE_TRUE(meta.error.empty());
-    EXPECT_EQ(static_cast<int>(meta.rows.size()), 12);
+    // Metadata file must have at least one configuration, without hardcoding fixed row count:
+    REQUIRE_TRUE(!meta.rows.empty());
+    EXPECT_GE(static_cast<int>(meta.rows.size()), 1);
+    // Verify each parsed entry has non-empty required fields:
+    for (const auto& row : meta.rows) {
+        EXPECT_TRUE(!row.pair_id.empty());
+        EXPECT_TRUE(!row.resolution.empty());
+        EXPECT_TRUE(!row.prepared_a.empty());
+        EXPECT_TRUE(!row.prepared_b.empty());
+    }
 }
 
 void test_metadata_parser_column_order_independent() {
@@ -2326,7 +2394,8 @@ int main() {
     RUN_TEST2(test_synthetic_image_pair_translation);  // S1->S4 end-to-end
 
     std::cout << "\n=== Metadata Parser (CSV, path derivation) ===\n";
-    RUN_TEST2(test_metadata_parser_valid_12_rows);
+    RUN_TEST2(test_metadata_parser_fixture_12_rows);
+    RUN_TEST2(test_metadata_parser_current_file_valid);
     RUN_TEST2(test_metadata_parser_column_order_independent);
     RUN_TEST2(test_metadata_parser_duplicate_pair_id_resolution_rejected);
     RUN_TEST2(test_metadata_parser_empty_file_rejected);
