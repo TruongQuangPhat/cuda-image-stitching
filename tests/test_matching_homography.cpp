@@ -1,22 +1,12 @@
-// Unit, integration and benchmark tests for Stage 3 (Feature Matching) and
-// Stage 4 (Homography Estimation) – CSC14120 CUDA Image Stitching, V0 baseline.
+// Unit, integration and benchmark tests for Feature Matching and
+// Homography Estimation.
 //
 // Authors: Truong Quang Phat (23120318)
 // AI-assisted development: implemented with Antigravity (Google DeepMind),
 // reviewed and corrected by the author.
 //
-// Build (release):
-//   mkdir -p build
-//   clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 \
-//       -Isrc tests/test_matching_homography.cpp src/orb.cpp src/matching.cpp src/homography.cpp \
-//       -o build/test_matching_homography && ./build/test_matching_homography
-//
-// Build (ASAN + UBSan):
-//   mkdir -p build
-//   clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O1 \
-//       -fsanitize=address,undefined -g \
-//       -Isrc tests/test_matching_homography.cpp src/orb.cpp src/matching.cpp src/homography.cpp \
-//       -o build/test_matching_homography_asan && ./build/test_matching_homography_asan
+// Build and execution instructions: see README.md.
+// Automated verification: scripts/run_matching_homography_tests.sh
 
 #include "../src/matching.h"
 #include "../src/homography.h"

@@ -48,14 +48,47 @@ cuda-image-stitching/
 ### 1. ORB Feature Extraction (S1–S2)
 
 Implemented in [`src/orb.h`](src/orb.h) and [`src/orb.cpp`](src/orb.cpp).
+Namespace: `stitching::orb`.
 
 - **Stage 1 (Detection):** Grayscale conversion, Gaussian image pyramid, FAST-9 corner detection, non-maximum suppression (NMS), and Harris response filtering.
-- **Stage 2 (Description):** Intensity centroid orientation assignment and steered 256-bit BRIEF binary descriptors.
+- **Stage 2 (Description):** Intensity centroid orientation assignment and steered 256-bit BRIEF binary descriptors computed on blurred pyramid levels.
 
 ```cpp
-orb::DetectionResult orb::detect(const GrayscaleImage& img, const DetectionConfig& cfg);
-orb::DescriptionResult orb::describe(const GrayscaleImage& img, const DetectionResult& det);
-orb::DescriptionResult orb::extract(const GrayscaleImage& img, const DetectionConfig& cfg);
+namespace stitching::orb {
+
+struct GrayImage;
+struct Config;
+struct DetectionResult;
+struct DescriptionResult;
+
+// Convert packed RGB/RGBA buffer to owned grayscale:
+GrayImage toGrayscale(const std::uint8_t* data, int width, int height, int channels, std::size_t row_stride_bytes = 0);
+
+// Stage 1: Detect multiscale FAST corners and rank by Harris response:
+DetectionResult detect(const GrayImage& grayscale, const Config& config = Config{});
+
+// Stage 2: Calculate intensity centroid orientations and build 256-bit steered BRIEF descriptors:
+DescriptionResult describe(const DetectionResult& detection, const Config& config = Config{});
+
+// Stage 1 + Stage 2 convenience pipeline:
+DescriptionResult extract(const GrayImage& grayscale, const Config& config = Config{});
+
+}
+```
+
+#### ORB Usage Example
+
+```cpp
+#include "orb.h"
+
+stitching::orb::Config config;
+
+// gray_image is a valid stitching::orb::GrayImage (e.g. from orb::toGrayscale() or PGM loader):
+auto detection = stitching::orb::detect(gray_image, config);
+auto description = stitching::orb::describe(detection, config);
+
+// Alternatively, run both stages together:
+auto result = stitching::orb::extract(gray_image, config);
 ```
 
 ### 2. Feature Matching (S3)
@@ -114,7 +147,11 @@ Namespace: `stitching::homography`.
 Run the automated script to prepare test fixtures, build both release and sanitizer targets in `build/`, and execute all 101 test cases:
 
 ```bash
+# Full verification (Dataset prep + Release tests + ASan/UBSan):
 ./scripts/run_matching_homography_tests.sh
+
+# Release-only verification (skips ASan/UBSan):
+RUN_SANITIZERS=0 ./scripts/run_matching_homography_tests.sh
 ```
 
 ### 2. Manual Build Commands
@@ -168,44 +205,67 @@ python3 scripts/prepare_pgm.py
 To integrate the estimated Homography into Stage 5 (Image Warping):
 
 ```cpp
-#include "src/matching.h"
-#include "src/homography.h"
+#include "matching.h"
+#include "homography.h"
+#include "orb.h"
 
-// 1. Run Feature Matching (Stage 3)
-stitching::matching::MatchingConfig match_cfg;
-match_cfg.ratio_threshold = 0.8f;
-const auto match_res = stitching::matching::match(desc_a, desc_b, match_cfg);
+// Example function illustrating the S3 -> S4 -> S5 pipeline handoff:
+bool computeWarpingHomography(
+    const stitching::orb::DescriptionResult& desc_a,
+    const stitching::orb::DescriptionResult& desc_b,
+    stitching::homography::HomographyResult& out_homo_res) {
 
-if (!match_res.valid) {
-    // Handle invalid matching (e.g. fewer than 2 descriptors detected)
-    return;
+    // 1. Run Feature Matching (Stage 3)
+    stitching::matching::MatchingConfig match_cfg;
+    match_cfg.ratio_threshold = 0.8f;
+    match_cfg.cross_check = false;
+
+    const auto match_res = stitching::matching::match(desc_a, desc_b, match_cfg);
+
+    // Note on match_res.valid:
+    // match_res.valid is false ONLY when inputs or MatchingConfig are invalid
+    // (e.g. ratio_threshold <= 0 or keypoint/descriptor size mismatch).
+    if (!match_res.valid) {
+        // Invalid matching input or configuration: inspect match_res.error_message
+        return false;
+    }
+
+    // A valid matching result may still contain fewer than 4 matches if the scene has low overlap:
+    if (match_res.matches.size() < 4) {
+        // Insufficient correspondences for homography estimation (DLT requires >= 4)
+        return false;
+    }
+
+    // 2. Run Homography Estimation (Stage 4)
+    stitching::homography::HomographyConfig homo_cfg;
+    homo_cfg.ransac_iterations = 2000;
+    homo_cfg.reprojection_threshold = 3.0; // In pixels
+    homo_cfg.min_inliers = 4;
+    homo_cfg.min_inlier_ratio = 0.0;       // Default: 0.0 (disabled)
+
+    const auto homo_res = stitching::homography::estimate(
+        match_res.matches, desc_a, desc_b, homo_cfg);
+
+    // 3. Mandatory validity gate before warping
+    if (!homo_res.valid) {
+        // FailureReason: TooFewMatches, AllHypothesesFailed, TooFewInliers, etc.
+        // Inspect homo_res.failure_reason and homo_res.error_message
+        return false;
+    }
+
+    out_homo_res = homo_res;
+    return true;
 }
-
-// 2. Run Homography Estimation (Stage 4)
-stitching::homography::HomographyConfig homo_cfg;
-homo_cfg.ransac_iterations = 2000;
-homo_cfg.reprojection_threshold = 3.0; // pixels
-homo_cfg.min_inliers = 4;
-
-const auto homo_res = stitching::homography::estimate(
-    match_res.matches, desc_a, desc_b, homo_cfg);
-
-// 3. Mandatory validity gate before warping
-if (!homo_res.valid) {
-    // FailureReason: TooFewMatches, AllHypothesesFailed, TooFewInliers, etc.
-    return;
-}
-
-// 4. Matrix Convention for Stage 5 Warping:
-// - Direction: H_B_to_A maps points from image B to image A: x_A ~ H * x_B.
-// - Storage: homo_res.H is std::array<double, 9> stored in row-major order:
-//     [ H[0]  H[1]  H[2] ]
-//     [ H[3]  H[4]  H[5] ]
-//     [ H[6]  H[7]  H[8] ]
-// - Inverse Warping: to render Image B onto Image A canvas:
-//     x_B = inv(H) * x_A (followed by bilinear interpolation in Image B).
-// - Inlier correspondences: homo_res.inlier_mask[k] == true indicates match[k] is an inlier.
 ```
+
+### Homography Convention & Warping Specifications
+
+- **Direction:** $H_{B \to A}$ maps points from image B to image A: $x_A \sim H_{B \to A} x_B$.
+- **Storage:** `homo_res.H` is a `std::array<double, 9>` stored in row-major order:
+  $$\begin{bmatrix} H[0] & H[1] & H[2] \\ H[3] & H[4] & H[5] \\ H[6] & H[7] & H[8] \end{bmatrix}$$
+- **Inverse Warping:** To render image B onto the canvas of image A, inverse mapping is applied for each canvas pixel $(x_A, y_A)$: compute $x_B = \text{inv}(H) x_A$ and sample pixel intensities via bilinear interpolation in image B.
+- **Inlier Correspondences:** `homo_res.inlier_mask[k] == true` indicates that `match_res.matches[k]` is an inlier consistent with $H$.
+- **Mathematical Validity vs. Visual Quality:** `homo_res.valid == true` certifies that RANSAC discovered a mathematically consistent homography meeting the inlier thresholds. It does not guarantee that the final stitched panorama is free from parallax or illumination seams (which must be handled by Stage 5 warping and Stage 6 multiband/feather blending).
 
 ---
 
