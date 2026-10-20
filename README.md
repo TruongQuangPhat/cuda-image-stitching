@@ -156,7 +156,7 @@ clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 \
     tests/test_s3_s4.cpp src/orb.cpp src/match_homography.cpp \
     -o tests/test_s3_s4
 
-./tests/test_s3_s4   # -> 101/101 test cases passed, 1539/1539 assertions passed (0 failed, 0 blocked)
+./tests/test_s3_s4   # -> 101/101 test cases passed, 1551/1551 assertions passed (0 failed, 0 blocked)
 
 # With AddressSanitizer and UndefinedBehaviorSanitizer:
 clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O1 \

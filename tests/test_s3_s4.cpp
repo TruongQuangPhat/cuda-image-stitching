@@ -1405,33 +1405,45 @@ void test_hom_refinement_fallback_when_refined_worse() {
 }
 
 void test_hom_huge_threshold_never_accepts_invalid_projection() {
-    std::cout << "  huge-threshold RANSAC: 5-correspondence fixture, invalid projection rejected\n";
-    // Construct a deterministic 5-correspondence problem:
-    // 4 anchor correspondences defining a projective homography:
-    //   H = [ -2,    0, 0
-    //          0,   -2, 0
-    //        -0.02,  0, 1 ]
-    // Homogeneous denominator: w = -0.02 * x_b + 1.
+    std::cout << "  huge-threshold RANSAC: portable 5-correspondence fixture, invalid projection rejected\n";
+    // Construct a mathematically robust, sampling-order-independent 5-correspondence fixture:
+    // Ground truth projective Homography:
+    //   H = [ -2.0,  0.0, 0.0
+    //          0.0, -2.0, 0.0
+    //        -1/55,  0.0, 1.0 ]
+    // Homogeneous denominator: w = 1.0 - x_B / 55.0.
     //
     // Anchors in B:
-    //   (10, 10), (100, 10), (100, 100), (10, 100) -> none have x_b = 50.
-    // Ground-truth projection:
-    //   (10, 10)   -> w = 0.8  -> (-25, -25)
-    //   (100, 10)  -> w = -1.0 -> (200, 20)
-    //   (100, 100) -> w = -1.0 -> (200, 200)
-    //   (10, 100)  -> w = 0.8  -> (-25, -250)
+    //   P0 = (10, 10)   -> w = 9/11   -> x_A = -220/9,  y_A = -220/9
+    //   P1 = (100, 10)  -> w = -9/11  -> x_A = 2200/9,  y_A = 220/9
+    //   P2 = (100, 100) -> w = -9/11  -> x_A = 2200/9,  y_A = 2200/9
+    //   P3 = (10, 100)  -> w = 9/11   -> x_A = -220/9,  y_A = -2200/9
     //
-    // 5th correspondence:
-    //   x_b = 50, y_b = 50 -> w = -0.02 * 50 + 1 = 0 (line at infinity, invalid projection!).
-    //   x_a = 0, y_a = 0 (finite coordinates, passes standard input validation).
+    // 5th point in B:
+    //   P4 = (55, 55) -> w = 1.0 - 55.0 / 55.0 = 0 (mapped to line at infinity!).
+    //   x_A = 0.0, y_A = 0.0 (finite coordinates, passes standard input validation).
     //
-    // When RANSAC evaluates the hypothesis formed by the 4 anchors, correspondence #4 has w = 0.
-    // In our implementation, projectInternal returns valid=false.
-    // With threshold = 3.0, 1e154, 1e200, and DBL_MAX:
-    // In the old buggy code, DBL_MAX * DBL_MAX = Inf <= Inf evaluated to true, marking correspondence #4
-    // as an inlier. In our corrected code, correspondence #4 is NEVER an inlier!
+    // Crucial Geometric Property:
+    // P4(55, 55) lies precisely at the intersection of diagonals P0-P2 (y = x) and P1-P3 (x + y = 110).
+    // Consequently, in EVERY 4-point sample containing P4:
+    //   - {P0, P1, P2, P4} contains collinear triplet {P0, P4, P2} on y = x.
+    //   - {P0, P2, P3, P4} contains collinear triplet {P0, P4, P2} on y = x.
+    //   - {P0, P1, P3, P4} contains collinear triplet {P1, P4, P3} on x + y = 110.
+    //   - {P1, P2, P3, P4} contains collinear triplet {P1, P4, P3} on x + y = 110.
+    // All 4 subsets containing P4 are strictly rejected as degenerate by isSampleDegenerate()!
+    // Therefore, the ONLY non-degenerate hypothesis that RANSAC can ever evaluate is the 4 anchors
+    // {P0, P1, P2, P3}, making the test 100% portable across standard libraries, compilers, and RNG streams.
     orb::DescriptionResult da, db;
     std::vector<matching::Match> matches;
+
+    const double h20 = -1.0 / 55.0;
+    auto project_gt = [&](double xb, double yb, double& xa, double& ya) -> bool {
+        const double w = h20 * xb + 1.0;
+        if (std::abs(w) < 1e-12) return false;
+        xa = -2.0 * xb / w;
+        ya = -2.0 * yb / w;
+        return true;
+    };
 
     auto add_pt = [&](float xb, float yb, float xa, float ya, std::size_t idx) {
         da.keypoints.push_back({xa, ya, 1.0f, 0.0f, 0});
@@ -1441,17 +1453,22 @@ void test_hom_huge_threshold_never_accepts_invalid_projection() {
         matches.push_back({idx, idx, 0, 10});
     };
 
-    add_pt(10.0f, 10.0f, -25.0f, -25.0f, 0);
-    add_pt(100.0f, 10.0f, 200.0f, 20.0f, 1);
-    add_pt(100.0f, 100.0f, 200.0f, 200.0f, 2);
-    add_pt(10.0f, 100.0f, -25.0f, -250.0f, 3);
-    // 5th point has xb = 50 -> w = 0 under the true H
-    add_pt(50.0f, 50.0f, 0.0f, 0.0f, 4);
+    double xa0, ya0, xa1, ya1, xa2, ya2, xa3, ya3;
+    project_gt(10.0, 10.0, xa0, ya0);
+    project_gt(100.0, 10.0, xa1, ya1);
+    project_gt(100.0, 100.0, xa2, ya2);
+    project_gt(10.0, 100.0, xa3, ya3);
 
-    // Verify zero-denominator sentinel on public API helper as well:
-    std::array<double, 9> H_gt = {-2.0, 0.0, 0.0, 0.0, -2.0, 0.0, -0.02, 0.0, 1.0};
-    const double err_zero_w = homography::reprojectionError(H_gt, 50.0, 50.0, 0.0, 0.0);
-    REQUIRE_TRUE(err_zero_w == std::numeric_limits<double>::max());
+    add_pt(10.0f, 10.0f, static_cast<float>(xa0), static_cast<float>(ya0), 0);
+    add_pt(100.0f, 10.0f, static_cast<float>(xa1), static_cast<float>(ya1), 1);
+    add_pt(100.0f, 100.0f, static_cast<float>(xa2), static_cast<float>(ya2), 2);
+    add_pt(10.0f, 100.0f, static_cast<float>(xa3), static_cast<float>(ya3), 3);
+    add_pt(55.0f, 55.0f, 0.0f, 0.0f, 4);
+
+    // Verify zero-denominator sentinel on ground-truth matrix:
+    std::array<double, 9> H_gt = {-2.0, 0.0, 0.0, 0.0, -2.0, 0.0, h20, 0.0, 1.0};
+    const double err_zero_w = homography::reprojectionError(H_gt, 55.0, 55.0, 0.0, 0.0);
+    REQUIRE_TRUE(err_zero_w == std::numeric_limits<double>::max() || !std::isfinite(err_zero_w));
 
     const double huge_thresholds[] = {
         3.0,
@@ -1462,11 +1479,12 @@ void test_hom_huge_threshold_never_accepts_invalid_projection() {
 
     for (double th : huge_thresholds) {
         homography::HomographyConfig cfg;
-        cfg.random_seed = 2; // With seed 2, iteration 0 samples exactly {0, 3, 2, 1}
-        cfg.ransac_iterations = 1;
+        cfg.random_seed = 42;
+        cfg.ransac_iterations = 2000;
         cfg.reprojection_threshold = th;
         const auto res = homography::estimate(matches, da, db, cfg);
         REQUIRE_TRUE(res.valid);
+        REQUIRE_TRUE(res.failure_reason == homography::FailureReason::None);
         REQUIRE_TRUE(res.inlier_mask.size() == 5);
         // The 4 valid anchors are inliers:
         REQUIRE_TRUE(res.inlier_mask[0]);
@@ -1480,6 +1498,18 @@ void test_hom_huge_threshold_never_accepts_invalid_projection() {
         REQUIRE_TRUE(std::isfinite(res.mean_reprojection_error));
         REQUIRE_TRUE(std::isfinite(res.max_reprojection_error));
         for (double v : res.H) REQUIRE_TRUE(std::isfinite(v));
+
+        // Confirm P4 is strictly an invalid projection on the estimated final H:
+        const double err_p4 = homography::reprojectionError(res.H, 55.0, 55.0, 0.0, 0.0);
+        REQUIRE_TRUE(err_p4 == std::numeric_limits<double>::max() || !std::isfinite(err_p4));
+
+        bool threw_p4 = false;
+        try {
+            (void)homography::project(res.H, 55.0, 55.0);
+        } catch (const std::domain_error&) {
+            threw_p4 = true;
+        }
+        REQUIRE_TRUE(threw_p4);
     }
 }
 
