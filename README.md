@@ -121,31 +121,50 @@ Stage 4 estimates the geometric transformation between image A and image B throu
 | Function / Type | Responsibility |
 |---|---|
 | `homography::estimate(matches, desc_a, desc_b, config)` | Estimate H_B_to_A from matched correspondences |
-| `homography::project(H, x, y)` | Project a 2-D point through H (homogeneous division) |
-| `homography::reprojectionError(H, xb, yb, xa, ya)` | Euclidean reprojection error in pixels |
-| `homography::HomographyConfig` | `ransac_iterations` (2000), `reprojection_threshold` (3.0 px), `min_inliers` (4), `random_seed` |
-| `homography::HomographyResult` | Complete estimation result and diagnostics |
-| `homography::FailureReason` | `TooFewMatches`, `AllHypothesesFailed`, `RefinementFailed`, `TooFewInliers` |
+| `homography::project(H, x, y)` | Project a 2-D point through H with scale-invariant normalization |
+| `homography::reprojectionError(H, xb, yb, xa, ya)` | Directional Euclidean reprojection error in pixels: \|\|x_A - project(H, x_B)\|\| |
+| `homography::HomographyConfig` | `ransac_iterations` (2000), `reprojection_threshold` (3.0 px), `min_inliers` (4), `min_inlier_ratio` (0.0), `random_seed` |
+| `homography::FailureReason` | `None`, `InvalidConfig`, `InvalidInput`, `TooFewMatches`, `AllHypothesesFailed`, `TooFewInliers`, `RefinementFailed` |
+| `homography::HomographyResult` | `H`, `valid`, `failure_reason`, `error_message`, `inlier_mask`, `num_inliers`, `inlier_ratio`, `mean_reprojection_error`, `max_reprojection_error`, `refinement_succeeded` |
 
 ---
 
 ## Building and Testing
 
+### Image Preparation (Dataset Integration)
+
+Before running the full dataset integration suite, convert the dataset JPEG images to PGM fixtures using the provided Python script (requires Python 3 + Pillow):
+
 ```bash
-# Compile S3 and S4 together (no extra dependencies beyond the STL):
-clang++ -std=c++17 -Wall -Wextra -O2 \
+# Convert dataset images from JPEG to PGM (does not alter original JPEGs):
+python3 scripts/prepare_pgm.py
+```
+
+### Running Test Suite
+
+You can execute the automated check script directly:
+
+```bash
+./scripts/run_s3_s4_checks.sh
+```
+
+Or manually run:
+
+```bash
+# Compile S3 and S4 test suite (standard C++17, zero external CV dependencies):
+clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 \
     tests/test_s3_s4.cpp src/orb.cpp src/match_homography.cpp \
     -o tests/test_s3_s4
 
-./tests/test_s3_s4   # → 381 passed, 0 failed
+./tests/test_s3_s4   # -> 100/100 test cases passed, 1419/1419 assertions passed (0 failed, 0 blocked)
 
 # With AddressSanitizer and UndefinedBehaviorSanitizer:
-clang++ -std=c++17 -Wall -Wextra -O1 \
-    -fsanitize=address,undefined \
+clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O1 \
+    -fsanitize=address,undefined -g \
     tests/test_s3_s4.cpp src/orb.cpp src/match_homography.cpp \
     -o tests/test_s3_s4_asan
 
-./tests/test_s3_s4_asan  # → 381 passed, 0 failed, no sanitizer errors
+./tests/test_s3_s4_asan  # -> 100/100 passed, 0 memory leaks, 0 UB, clean exit
 ```
 
 ---
