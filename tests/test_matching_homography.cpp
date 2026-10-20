@@ -6,17 +6,20 @@
 // reviewed and corrected by the author.
 //
 // Build (release):
-//   clang++ -std=c++17 -Wall -Wextra -Wpedantic -O2
-//       tests/test_s3_s4.cpp src/orb.cpp src/match_homography.cpp
-//       -o tests/test_s3_s4 && ./tests/test_s3_s4
+//   mkdir -p build
+//   clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 \
+//       -Isrc tests/test_matching_homography.cpp src/orb.cpp src/matching.cpp src/homography.cpp \
+//       -o build/test_matching_homography && ./build/test_matching_homography
 //
 // Build (ASAN + UBSan):
-//   clang++ -std=c++17 -Wall -Wextra -Wpedantic -O1
-//       -fsanitize=address,undefined -g
-//       tests/test_s3_s4.cpp src/orb.cpp src/match_homography.cpp
-//       -o tests/test_s3_s4_asan && ./tests/test_s3_s4_asan
+//   mkdir -p build
+//   clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O1 \
+//       -fsanitize=address,undefined -g \
+//       -Isrc tests/test_matching_homography.cpp src/orb.cpp src/matching.cpp src/homography.cpp \
+//       -o build/test_matching_homography_asan && ./build/test_matching_homography_asan
 
-#include "../src/match_homography.h"
+#include "../src/matching.h"
+#include "../src/homography.h"
 #include "../src/orb.h"
 
 #include <algorithm>

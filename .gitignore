@@ -9,12 +9,18 @@ build/
 bin/
 
 # Test binaries
+tests/test_matching_homography
+tests/test_matching_homography_asan
 tests/test_s3_s4
 tests/test_s3_s4_asan
 tests/debug_*
 
 # Generated dataset fixtures
 *.pgm
+
+# Archives and release packages
+*.zip
+*.tar.gz
 
 # IDE and OS
 .DS_Store
