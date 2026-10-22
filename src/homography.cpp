@@ -1,19 +1,8 @@
-// Homography Estimation (Hartley Normalized DLT + Jacobi Eigensolver + RANSAC + Inlier Refinement):
-// original educational implementation for CSC14120 – Parallel Programming, V0 sequential
-// baseline.
-//
-// Authors: Truong Quang Phat (23120318)
-// AI-assisted development: implemented with Antigravity (Google DeepMind), reviewed
-// and corrected by the author. All algorithmic decisions and results are verified by
-// the team per course academic integrity requirements.
-//
-// Algorithm references:
-//   - Hartley, R. & Zisserman, A. (2004). Multiple View Geometry in Computer Vision
-//     (2nd ed.). Cambridge University Press. [Chapters 4, 11]
-//   - Fischler, M.A. & Bolles, R.C. (1981). Random Sample Consensus.
-//     Communications of the ACM, 24(6), 381-395.
-//   - Golub, G.H. & Van Loan, C.F. (2013). Matrix Computations (4th ed.).
-//     Johns Hopkins University Press. [Section 8.4 - Jacobi Methods]
+// Authors: TRƯƠNG QUANG PHÁT (23120318); CHÂU HUỲNH PHÚC (23120329, S4).
+// Normalized DLT, Jacobi eigensolver, RANSAC and inlier refinement.
+// References: Hartley and Zisserman, Multiple View Geometry (2004);
+// Fischler and Bolles, Random Sample Consensus (1981);
+// Golub and Van Loan, Matrix Computations (2013), Jacobi methods.
 
 #include "homography.h"
 
