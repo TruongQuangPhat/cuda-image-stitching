@@ -24,6 +24,20 @@ namespace {
 double milliseconds(Clock::time_point a, Clock::time_point b) {
     return std::chrono::duration<double,std::milli>(b-a).count();
 }
+
+double finiteNumber(const std::string& text, const char* name) {
+    std::size_t consumed = 0;
+    double value;
+    try {
+        value = std::stod(text, &consumed);
+    } catch (const std::exception&) {
+        throw std::runtime_error(std::string("Invalid ") + name + ": expected a finite number");
+    }
+    if (consumed != text.size() || text.find_first_of(" \t\n\r\v\f") != std::string::npos ||
+        !std::isfinite(value))
+        throw std::runtime_error(std::string("Invalid ") + name + ": expected a finite number");
+    return value;
+}
 }  // namespace
 
 int stitching::runV0(int argc, char** argv) {
@@ -36,7 +50,22 @@ int stitching::runV0(int argc, char** argv) {
         const std::string mode = argc > 5 ? argv[5] : "feather";
         if (mode != "feather" && mode != "seam") throw std::runtime_error("Unknown blend mode");
         stitching::homography::HomographyConfig hc;
-        if (argc > 6) hc.reprojection_threshold = std::stod(argv[6]);
+        if (argc > 6) hc.reprojection_threshold = finiteNumber(argv[6], "reprojection threshold");
+        if (hc.reprojection_threshold <= 0.0)
+            throw std::runtime_error("Reprojection threshold must be positive");
+        std::array<double,9> truth{};
+        if (argc > 7) {
+            std::ifstream truth_file(argv[7]);
+            if (!truth_file) throw std::runtime_error("Cannot open ground-truth matrix");
+            std::string text;
+            for (double& value : truth) {
+                if (!(truth_file >> text)) throw std::runtime_error("Incomplete ground-truth matrix");
+                value = finiteNumber(text, "ground-truth coefficient");
+            }
+            if (truth_file >> text) throw std::runtime_error("Ground-truth matrix must contain 9 values");
+            if (truth_file.bad() || !truth_file.eof())
+                throw std::runtime_error("Cannot read ground-truth matrix");
+        }
         bp::BlendConfig bc;
         if (mode == "seam") {
             bc.mode = bp::BlendMode::MinimumErrorSeam;
@@ -93,11 +122,6 @@ int stitching::runV0(int argc, char** argv) {
         metrics << "],\n\"exposure_gains\":[" << blended.exposure_gains[0] << ','
                 << blended.exposure_gains[1] << ',' << blended.exposure_gains[2] << ']';
         if (argc > 7) {
-            std::ifstream truth_file(argv[7]);
-            std::array<double,9> truth{};
-            for (double& value : truth)
-                if (!(truth_file >> value) || !std::isfinite(value))
-                    throw std::runtime_error("Invalid ground-truth matrix");
             double sum = 0, maximum = 0;
             constexpr int nx = 8, ny = 6;
             for (int y = 0; y < ny; ++y) for (int x = 0; x < nx; ++x) {
@@ -105,6 +129,8 @@ int stitching::runV0(int argc, char** argv) {
                 const auto expected = stitching::homography::project(truth,px,py);
                 const auto actual = stitching::homography::project(h.H,px,py);
                 const double error = std::hypot(expected.x-actual.x,expected.y-actual.y);
+                if (!std::isfinite(error) || sum > std::numeric_limits<double>::max() - error)
+                    throw std::runtime_error("Ground-truth projection error is not representable");
                 sum += error; maximum = std::max(maximum,error);
             }
             metrics << ",\n\"holdout_mean_error_px\":" << sum/(nx*ny)
@@ -112,6 +138,10 @@ int stitching::runV0(int argc, char** argv) {
         }
         metrics << "\n}\n";
         if (!metrics) throw std::runtime_error("Failed writing metrics");
+        metrics.flush();
+        if (!metrics) throw std::runtime_error("Failed flushing metrics");
+        metrics.close();
+        if (!metrics) throw std::runtime_error("Failed closing metrics");
         std::cout << mode << ": " << blended.panorama.width << 'x' << blended.panorama.height
                   << ", " << h.num_inliers << '/' << matches.matches.size() << " inliers, "
                   << milliseconds(begin,end) << " ms\n";

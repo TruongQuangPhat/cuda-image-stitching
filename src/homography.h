@@ -38,7 +38,7 @@ struct HomographyConfig {
     // e.g. 0.15 - 0.20 rejects accidental 4-point consensus in noisy match sets.
     double min_inlier_ratio = 0.0;
 
-    // RNG seed for deterministic RANSAC. Same seed -> same result.
+    // RNG seed for deterministic RANSAC with the same inputs and implementation.
     std::uint32_t random_seed = 0xC5C14120u;
 };
 
@@ -50,7 +50,7 @@ enum class FailureReason {
     TooFewMatches,       // Fewer than 4 input matches.
     AllHypothesesFailed, // No valid DLT solution found in RANSAC.
     TooFewInliers,       // Best model has fewer than min_inliers or inlier_ratio < min_inlier_ratio.
-    RefinementFailed,    // DLT refinement failed and fallback also failed.
+    RefinementFailed,    // Reserved for compatibility; current estimate() retains accepted RANSAC H.
 };
 
 std::string failureReasonToString(FailureReason r);
@@ -60,6 +60,8 @@ std::string failureReasonToString(FailureReason r);
 //
 // H is a 3x3 matrix stored row-major: H[row*3 + col].
 // When valid == false, H is all-zeros and must NOT be used.
+// Inspect valid first: a default-constructed result is not an estimate even
+// though failure_reason starts at None. estimate() sets None only on success.
 struct HomographyResult {
     // The estimated Homography.
     std::array<double, 9> H{};
@@ -67,22 +69,25 @@ struct HomographyResult {
     bool           valid          = false;
     FailureReason  failure_reason = FailureReason::None;
 
-    // Non-empty: either an error description (valid=false) or an info message
+    // May be non-empty: either an error description (valid=false) or an info message
     // (valid=true, e.g. when refinement fell back to RANSAC best H).
     std::string    error_message;
 
     // Inlier mask: one entry per input match (inlier_mask.size()==matches.size()).
-    // Computed with the RETURNED H (always consistent with H above).
+    // On success, computed with the RETURNED H. On TooFewInliers failure, this
+    // and the count/ratio describe the rejected best hypothesis; they do NOT
+    // validate the zero H. Other estimate() failures return an all-false mask.
     std::vector<bool> inlier_mask;
     int               num_inliers  = 0;   // count(inlier_mask == true)
     double            inlier_ratio = 0.0; // num_inliers / matches.size()
 
-    // Reprojection error statistics over inliers only, using the returned H.
+    // On success, reprojection statistics over returned-H inliers only.
+    // On failure these remain zero (unavailable, not a zero-error estimate).
     double mean_reprojection_error = 0.0;
     double max_reprojection_error  = 0.0;
 
     // True if inlier-refinement DLT succeeded AND the refined model was accepted
-    // as the final model (improving inliers or reprojection error).
+    // as the final model (more inliers, or same count with error within tolerance).
     // False if refinement failed or was rejected in favor of the RANSAC best hypothesis.
     bool refinement_succeeded = false;
 };
@@ -93,8 +98,9 @@ struct HomographyResult {
 //   desc_a, desc_b: same DescriptionResult objects passed to match()
 //   config:         algorithm parameters (validated on entry)
 //
-// All errors are communicated through HomographyResult.valid / .failure_reason.
-// Does NOT throw exceptions.
+// Logical failures are communicated through valid / failure_reason. Allocation
+// exceptions may propagate. valid means the configured consensus policy passed;
+// it does not certify image-wide quality, coverage or a bounded warp canvas.
 HomographyResult estimate(
     const std::vector<matching::Match>& matches,
     const orb::DescriptionResult&       desc_a,
@@ -102,10 +108,12 @@ HomographyResult estimate(
     const HomographyConfig&             config = HomographyConfig{});
 
 // Project a 2-D point through H (performs homogeneous division).
-// Invariant to projective scaling: project(c * H, x, y) == project(H, x, y) for any c != 0.
-// Returns {x, y} in Euclidean space.
+// Returns Euclidean coordinates at this point; does NOT check matrix
+// invertibility. Even a singular matrix may project an individual point.
+// Scaling H preserves the result within floating-point precision when both
+// representations remain finite, max(abs(H)) >= 1e-300, and projection is valid.
 // Throws std::domain_error if:
-//   - H is all-zeros or degenerate,
+//   - max(abs(H)) < 1e-300 (including the zero matrix),
 //   - H contains non-finite values,
 //   - input coordinates are non-finite,
 //   - homogeneous denominator is near zero relative to coordinate scale,
@@ -114,8 +122,8 @@ struct Point2d { double x, y; };
 Point2d project(const std::array<double, 9>& H, double x, double y);
 
 // Euclidean reprojection error: ||project(H, p_b) - p_a||.
-// Consistent with project(): scale-invariant to c * H for any c != 0.
-// Returns std::numeric_limits<double>::max() on degeneracy or non-finite result.
+// Uses the same projection validity/scaling limits as project().
+// Returns std::numeric_limits<double>::max() on invalid projection/non-finite input or error.
 // Never throws.
 double reprojectionError(const std::array<double, 9>& H,
                          double xb, double yb,

@@ -55,12 +55,19 @@ void validateConfig(const Config& c) {
     }
 }
 
+void validateDescriptionConfig(const Config& c) {
+    if (c.patch_size != 31) {
+        throw std::invalid_argument("This rBRIEF implementation requires patch_size=31");
+    }
+}
+
 inline std::uint8_t pixel(const GrayImage& image, int x, int y) {
     return image.pixels[static_cast<std::size_t>(y) * image.width + x];
 }
 
-inline int clampTo(int value, int high) {
-    return std::max(0, std::min(value, high));
+inline int clampTo(std::int64_t value, int high) {
+    return static_cast<int>(std::max(std::int64_t{0},
+        std::min(value, static_cast<std::int64_t>(high))));
 }
 
 // A small binomial Gaussian filter reduces aliasing before downsampling.
@@ -74,7 +81,8 @@ GrayImage blur5x5(const GrayImage& src) {
         for (int x = 0; x < src.width; ++x) {
             int sum = 0;
             for (int dx = -2; dx <= 2; ++dx) {
-                sum += kWeights[dx + 2] * pixel(src, clampTo(x + dx, src.width - 1), y);
+                const int sx = clampTo(static_cast<std::int64_t>(x) + dx, src.width - 1);
+                sum += kWeights[dx + 2] * pixel(src, sx, y);
             }
             horizontal[static_cast<std::size_t>(y) * src.width + x] =
                 static_cast<std::uint16_t>(sum); // Max = 16*255.
@@ -85,8 +93,9 @@ GrayImage blur5x5(const GrayImage& src) {
         for (int x = 0; x < src.width; ++x) {
             int sum = 0;
             for (int dy = -2; dy <= 2; ++dy) {
+                const int sy = clampTo(static_cast<std::int64_t>(y) + dy, src.height - 1);
                 sum += kWeights[dy + 2] * horizontal[
-                    static_cast<std::size_t>(clampTo(y + dy, src.height - 1)) * src.width + x];
+                    static_cast<std::size_t>(sy) * src.width + x];
             }
             dst.pixels[static_cast<std::size_t>(y) * src.width + x] =
                 static_cast<std::uint8_t>((sum + 128) / 256);
@@ -104,12 +113,14 @@ GrayImage resizeBilinear(const GrayImage& src, int new_width, int new_height) {
 
     for (int y = 0; y < new_height; ++y) {
         const float sy = std::max(0.0f, (y + 0.5f) * scale_y - 0.5f);
-        const int y0 = std::min(static_cast<int>(sy), src.height - 1);
+        const int y0 = static_cast<int>(std::min(static_cast<double>(sy),
+                                                 static_cast<double>(src.height - 1)));
         const int y1 = std::min(y0 + 1, src.height - 1);
         const float fy = sy - y0;
         for (int x = 0; x < new_width; ++x) {
             const float sx = std::max(0.0f, (x + 0.5f) * scale_x - 0.5f);
-            const int x0 = std::min(static_cast<int>(sx), src.width - 1);
+            const int x0 = static_cast<int>(std::min(static_cast<double>(sx),
+                                                     static_cast<double>(src.width - 1)));
             const int x1 = std::min(x0 + 1, src.width - 1);
             const float fx = sx - x0;
             const float a = pixel(src, x0, y0) * (1.0f - fx) + pixel(src, x1, y0) * fx;
@@ -131,8 +142,9 @@ std::vector<PyramidLevel> buildPyramid(const GrayImage& image, const Config& c) 
         if (!std::isfinite(scale)) break;
         const int width = static_cast<int>(std::lround(image.width / scale));
         const int height = static_cast<int>(std::lround(image.height / scale));
-        if (width < 2 * c.edge_threshold + 1 ||
-            height < 2 * c.edge_threshold + 1) break;
+        // Equivalent to dimension < 2*edge_threshold+1, without multiplication.
+        if (c.edge_threshold > (width - 1) / 2 ||
+            c.edge_threshold > (height - 1) / 2) break;
 
         // Construct from the preceding level for predictable filtering cost.
         GrayImage filtered = blur5x5(pyramid.back().image);
@@ -213,7 +225,8 @@ std::vector<Keypoint> detectLevel(const PyramidLevel& level, int octave,
                                   const Config& c) {
     const auto& image = level.image;
     const int margin = std::max(c.edge_threshold, 4);
-    if (image.width <= 2 * margin || image.height <= 2 * margin) return {};
+    if (margin > (image.width - 1) / 2 ||
+        margin > (image.height - 1) / 2) return {};
     std::vector<std::uint8_t> scores(imageSize(image.width, image.height), 0);
 
     for (int y = margin; y < image.height - margin; ++y) {
@@ -301,6 +314,18 @@ GrayImage toGrayscale(const std::uint8_t* data,
     if (row_stride_bytes == 0) row_stride_bytes = min_stride;
     if (row_stride_bytes < min_stride) {
         throw std::invalid_argument("Row stride smaller than active row size");
+    }
+
+    // The caller must provide at least (height-1)*stride + min_stride readable
+    // bytes. A raw pointer cannot establish the actual buffer capacity.
+    // Bound the full span by PTRDIFF_MAX; unused trailing padding is excluded.
+    const auto span_limit = static_cast<std::size_t>(
+        std::numeric_limits<std::ptrdiff_t>::max());
+    const auto preceding_rows = static_cast<std::size_t>(height - 1);
+    if (min_stride > span_limit ||
+        (preceding_rows != 0 && row_stride_bytes >
+            (span_limit - min_stride) / preceding_rows)) {
+        throw std::overflow_error("Input image span exceeds ptrdiff_t range");
     }
 
     GrayImage output{width, height, std::vector<std::uint8_t>(n_pixels)};
@@ -494,9 +519,7 @@ std::pair<int, int> keypointInLevel(const Keypoint& kp,
 
 DescriptionResult describe(const DetectionResult& detection,
                            const Config& config) {
-    if (config.patch_size != 31) {
-        throw std::invalid_argument("This rBRIEF implementation requires patch_size=31");
-    }
+    validateDescriptionConfig(config);
     if (detection.pyramid.empty()) {
         throw std::invalid_argument("DetectionResult must contain a pyramid");
     }
@@ -529,6 +552,7 @@ DescriptionResult describe(const DetectionResult& detection,
 }
 
 DescriptionResult extract(const GrayImage& grayscale, const Config& config) {
+    validateDescriptionConfig(config);
     auto detection = detect(grayscale, config);
     return describe(detection, config);
 }

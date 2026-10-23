@@ -30,11 +30,18 @@ inline double det3(const Mat3& m) {
          + m[2] * (m[3] * m[7] - m[4] * m[6]);
 }
 
-// Returns false if the matrix is not invertible (det near zero).
+// Use cancellation relative to determinant terms, not an absolute determinant
+// cutoff: Hartley transforms can have a tiny but well-conditioned scale.
 bool invert3(const Mat3& m, Mat3& inv) {
+    for (double value : m)
+        if (!std::isfinite(value)) return false;
     const double d = det3(m);
-    constexpr double kEps = 1e-12;
-    if (std::abs(d) < kEps) return false;
+    const double scale = std::abs(m[0] * (m[4] * m[8] - m[5] * m[7])) +
+                         std::abs(m[1] * (m[3] * m[8] - m[5] * m[6])) +
+                         std::abs(m[2] * (m[3] * m[7] - m[4] * m[6]));
+    constexpr double kRelativeEpsilon = 64.0 * std::numeric_limits<double>::epsilon();
+    if (!std::isfinite(d) || !std::isfinite(scale) || scale == 0.0 ||
+        std::abs(d) <= kRelativeEpsilon * scale) return false;
     const double id = 1.0 / d;
     inv[0] =  (m[4] * m[8] - m[5] * m[7]) * id;
     inv[1] = -(m[1] * m[8] - m[2] * m[7]) * id;
@@ -45,6 +52,8 @@ bool invert3(const Mat3& m, Mat3& inv) {
     inv[6] =  (m[3] * m[7] - m[4] * m[6]) * id;
     inv[7] = -(m[0] * m[7] - m[1] * m[6]) * id;
     inv[8] =  (m[0] * m[4] - m[1] * m[3]) * id;
+    for (double value : inv)
+        if (!std::isfinite(value)) return false;
     return true;
 }
 
@@ -72,7 +81,7 @@ bool hartleyNormalize(const std::vector<double>& x,
                       const std::vector<double>& y,
                       NormResult& out) {
     const std::size_t n = x.size();
-    if (n == 0) return false;
+    if (n == 0 || y.size() != n) return false;
 
     // Verify finiteness before computing statistics.
     for (std::size_t i = 0; i < n; ++i)
@@ -83,6 +92,7 @@ bool hartleyNormalize(const std::vector<double>& x,
     for (std::size_t i = 0; i < n; ++i) { cx += x[i]; cy += y[i]; }
     cx /= static_cast<double>(n);
     cy /= static_cast<double>(n);
+    if (!std::isfinite(cx) || !std::isfinite(cy)) return false;
 
     // Mean distance from centroid.
     double mean_dist = 0.0;
@@ -95,21 +105,25 @@ bool hartleyNormalize(const std::vector<double>& x,
 
     // Avoid division by zero when all points are coincident.
     constexpr double kEps = 1e-9;
-    if (mean_dist < kEps) return false;
+    if (!std::isfinite(mean_dist) || mean_dist < kEps) return false;
 
     const double s = std::sqrt(2.0) / mean_dist;
+    if (!std::isfinite(s) || s <= 0.0) return false;
 
     // T = [[s, 0, -s*cx], [0, s, -s*cy], [0, 0, 1]]
     out.T = {};
     out.T[0] = s;   out.T[1] = 0.0; out.T[2] = -s * cx;
     out.T[3] = 0.0; out.T[4] = s;   out.T[5] = -s * cy;
     out.T[6] = 0.0; out.T[7] = 0.0; out.T[8] =  1.0;
+    for (double value : out.T)
+        if (!std::isfinite(value)) return false;
 
     out.xs.resize(n);
     out.ys.resize(n);
     for (std::size_t i = 0; i < n; ++i) {
         out.xs[i] = s * (x[i] - cx);
         out.ys[i] = s * (y[i] - cy);
+        if (!std::isfinite(out.xs[i]) || !std::isfinite(out.ys[i])) return false;
     }
     return true;
 }
@@ -697,6 +711,8 @@ HomographyResult estimate(
                                 " inliers and >= " +
                                 std::to_string(config.min_inlier_ratio) + " ratio";
         result.inlier_mask    = best_mask;
+        // Diagnostics from the rejected best hypothesis, not from result.H.
+        // H remains all-zeros and must not be used when valid is false.
         result.num_inliers    = best_inlier_count;
         result.inlier_ratio   = best_inlier_ratio;
         return result;
@@ -740,7 +756,7 @@ HomographyResult estimate(
 
     // Acceptance policy:
     // Refined model must meet min_inliers and min_inlier_ratio.
-    // It must also be strictly better than best_H (more inliers, or same inliers with lower total error).
+    // Prefer more inliers, or the same count with error within the tolerance below.
     const double refined_ratio = static_cast<double>(refined_inlier_count) / static_cast<double>(N);
     const bool meets_confidence = (refined_inlier_count >= config.min_inliers) &&
                                   (config.min_inlier_ratio <= 0.0 || refined_ratio >= config.min_inlier_ratio);
