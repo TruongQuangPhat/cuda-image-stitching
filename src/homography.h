@@ -62,6 +62,12 @@ std::string failureReasonToString(FailureReason r);
 // When valid == false, H is all-zeros and must NOT be used.
 // Inspect valid first: a default-constructed result is not an estimate even
 // though failure_reason starts at None. estimate() sets None only on success.
+// For a result returned by estimate():
+//   success: valid=true, failure_reason=None, H/mask/count/ratio/errors agree.
+//   failure: valid=false, failure_reason!=None, H remains zero. Only the
+//            diagnostic mask/count/ratio may describe a rejected hypothesis.
+// Consumers must gate on valid, never on mask population or message emptiness.
+// Stage 5 additionally checks invertibility, the projective horizon and canvas.
 struct HomographyResult {
     // The estimated Homography.
     std::array<double, 9> H{};
@@ -71,6 +77,7 @@ struct HomographyResult {
 
     // May be non-empty: either an error description (valid=false) or an info message
     // (valid=true, e.g. when refinement fell back to RANSAC best H).
+    // Kept as one field for compatibility; an '(info)' message is not a failure.
     std::string    error_message;
 
     // Inlier mask: one entry per input match (inlier_mask.size()==matches.size()).
@@ -89,6 +96,8 @@ struct HomographyResult {
     // True if inlier-refinement DLT succeeded AND the refined model was accepted
     // as the final model (more inliers, or same count with error within tolerance).
     // False if refinement failed or was rejected in favor of the RANSAC best hypothesis.
+    // A false value does not invalidate an accepted fallback H. Refinement is
+    // attempted only after RANSAC passes confidence; failure retains that H.
     bool refinement_succeeded = false;
 };
 

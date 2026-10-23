@@ -29,7 +29,9 @@ DATASET_URL = (
     "https://drive.usercontent.google.com/download"
     "?id=11Nbg77zkOizdNcY5vEmlybP60KTv5NUk&export=download&confirm=t"
 )
+# Expected ZIP bytes; extracted files cannot independently verify this digest.
 DATASET_SHA256 = "2097dc6eeb3d339731541f94df0d3f44694b447bd6f5b9c66699559ac7269827"
+SOURCE_HASH_NORMALIZATION = "CRLF-to-LF-only-v1"
 RUNS, WARMUPS = 3, 1
 MODES = ["feather", "seam"]
 STAGES = [f"s{i}_ms" for i in range(1,7)]
@@ -53,9 +55,27 @@ def extract_safe(archive, destination, allowed=None):
             if name.startswith(("src/", "dataset/")) or name.endswith(".ipynb")])
 
 def source_hashes(root):
+    """Raw file identity; kept unchanged for existing provenance consumers."""
     paths = sorted(root.joinpath("src").glob("*.*"))
     return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
             for p in paths if p.is_file()}
+
+def normalized_source_hashes(root):
+    """Supplementary hashes: replace CRLF with LF, preserving all other bytes."""
+    paths = sorted(root.joinpath("src").glob("*.*"))
+    return {p.relative_to(root).as_posix(): hashlib.sha256(
+                p.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+            for p in paths if p.is_file()}
+
+def _check_source_hashes(root, recorded):
+    # Normalized equivalence never overrides the exact bytes used by a run.
+    if recorded["source_sha256"] != source_hashes(root):
+        raise AssertionError("Nguồn thay đổi sau khi đo")
+    if "source_sha256_lf" in recorded or "source_hash_normalization" in recorded:
+        if recorded.get("source_hash_normalization") != SOURCE_HASH_NORMALIZATION:
+            raise AssertionError("Quy tắc hash nguồn không khớp")
+        if recorded.get("source_sha256_lf") != normalized_source_hashes(root):
+            raise AssertionError("Normalized source hash không khớp")
 
 class Runner:
     def __init__(self, root=ROOT, backend="auto", distro=""):
@@ -170,13 +190,15 @@ def environment(runner, output, runs, warmups, modes):
             "runs": runs, "warmups": warmups, "modes": modes, "max_features": 2000,
             "ransac_iterations": 2000, "reference_width": 800, "reference_threshold_px": 3.0,
             "compile_flags": "-std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 -Isrc -DSTITCHING_NO_MAIN -x c++",
-            "starter_status": "team-authored placeholder adapter; not the official starter",
+            "starter_status": "team-authored interfaces; course supplied Midterm PDF, no starter notebook",
             "dataset_course_approval_verified": False,
             "seam_comparison": {"feather_radius_px":8,
                                 "exposure_gains":"RGB overlap-mean intensity odds ratio, clamped [0.5,2]; preserves black/white"},
             "timing_scope": "RGB-to-gray preprocessing + S1-S6; excludes file I/O, image decoding, process startup",
             "s1_s2_scope": "sum of work for both input images", "clock": "std::chrono::steady_clock",
             "source_sha256": source_hashes(runner.root),
+            "source_sha256_lf": normalized_source_hashes(runner.root),
+            "source_hash_normalization": SOURCE_HASH_NORMALIZATION,
             "dataset_sha256": {f.relative_to(runner.root).as_posix(): hashlib.sha256(f.read_bytes()).hexdigest()
                                for f in sorted(dataset_paths)}}
     try:
@@ -264,7 +286,9 @@ def _export_bundle():
         raise RuntimeError("Chưa chạy đủ cell; hãy Run all")
     _report["metadata"]["lan_chay"] = {
         "utc": datetime.now(timezone.utc).isoformat(), "google_colab": IN_COLAB,
-        "nguon_sha256": source_hashes(ROOT), "so_luot_do": len(timings)}
+        "nguon_sha256": source_hashes(ROOT), "so_luot_do": len(timings),
+        "nguon_sha256_lf": normalized_source_hashes(ROOT),
+        "source_hash_normalization": SOURCE_HASH_NORMALIZATION}
     report_path = ROOT / "Group09_Midterm.ipynb"
     report_path.write_text(json.dumps(_report, ensure_ascii=False, indent=1, allow_nan=False), encoding="utf-8")
     archive = ROOT / (GROUP_ID + "_Midterm.zip")
@@ -506,7 +530,7 @@ def finish():
     assert len(timings) == len(expected) and actual == expected
     assert not summary.duplicated(["pair_id","resolution","mode"]).any()
     env = json.loads((OUT / "environment.json").read_text())
-    assert env["source_sha256"] == source_hashes(ROOT), "Nguồn thay đổi sau khi đo"
+    _check_source_hashes(ROOT, env)
     for path,digest in env["dataset_sha256"].items():
         assert hashlib.sha256((ROOT/path).read_bytes()).hexdigest() == digest
     for row in summary.itertuples():

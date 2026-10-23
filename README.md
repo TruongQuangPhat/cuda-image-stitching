@@ -50,15 +50,17 @@ Dự án dùng bốn cặp ảnh: CMU0 chuẩn, CMU1 chuẩn, CMU2 chuẩn và C
 
 - [Tải ImageStitching_Team_Dataset.zip](https://drive.google.com/file/d/11Nbg77zkOizdNcY5vEmlybP60KTv5NUk/view)
 - Nguồn ảnh: [OpenPano CMU, release 0.1](https://github.com/ppwwyyxx/OpenPano/releases/tag/0.1)
-- SHA-256 mong đợi của ZIP dữ liệu:
+- SHA-256 expected đang được cấu hình trong `src/notebook_support.py`:
 
 ```text
-2097dc6eeb3d339731541f94df0d3f44694b447bd6f5b9c6669959ac7269827
+2097dc6eeb3d339731541f94df0d3f44694b447bd6f5b9c66699559ac7269827
 ```
+
+Đây là expected value của helper, chưa được đối chiếu độc lập với ZIP gốc trong đợt hardening vì ZIP không có sẵn. Các file ảnh đã giải nén không chứng minh được SHA-256 của archive; không tạo lại ZIP để thay thế bằng chứng đó. Một ZIP cụ thể chỉ được xác nhận khi hash bytes thực tế khớp expected value.
 
 Notebook kiểm tra SHA-256 trước khi giải nén. Nếu không tìm thấy dataset ở thư mục dự án hoặc thư mục cha, notebook sẽ thử tải từ Drive; trên Colab có thể chọn ZIP thủ công khi được nhắc. Thư mục **dataset/** được tạo lúc chạy và không được commit vào Git.
 
-> Hãy xác nhận các site CMU được dùng có phù hợp với site nhóm đã đăng ký theo yêu cầu môn học hay không.
+Theo tài liệu Midterm được cung cấp, giảng viên không đưa ra cơ chế đăng ký sites riêng. Các cặp CMU là lựa chọn có ghi nguồn của nhóm; điều này không đồng nghĩa với việc giảng viên đã chính thức chấp thuận dataset.
 
 ## Cách chạy
 
@@ -90,6 +92,41 @@ jupyter notebook Group09_Midterm.ipynb
 ```
 
 Khi notebook chạy, helper sẽ biên dịch V0 với **-std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror**, chạy thực nghiệm và lưu kết quả dưới **output/v0/**. Không cần cài OpenCV, Eigen hay CUDA Toolkit cho baseline CPU.
+
+### Canonical build và standalone build
+
+Canonical entry point là `main.cu`: `main()` gọi `stitching::runV0()` được khai báo trong `versions.h` và định nghĩa trong `v0_stitching.cpp`. `Runner.build()` trong helper dùng đúng source list và flags sau, biên dịch `.cu` như C++:
+
+```bash
+mkdir -p build
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 -Isrc \
+  -DSTITCHING_NO_MAIN -x c++ \
+  src/main.cu src/stb_impl.cpp src/v0_stitching.cpp src/orb.cpp \
+  src/matching.cpp src/homography.cpp src/warping.cpp src/blending.cpp \
+  -o build/v0_stitching
+```
+
+Ở native backend, helper dùng `CXX` nếu đã đặt, hoặc tìm `g++`/`clang++`; WSL backend dùng `g++`. Macro `STITCHING_NO_MAIN` loại standalone `main()` trong `v0_stitching.cpp`, để binary có đúng một `main()` từ `main.cu`.
+
+Standalone entry point vẫn được hỗ trợ: dùng cùng pipeline/CLI, bỏ `main.cu` khỏi source list và không định nghĩa `STITCHING_NO_MAIN`:
+
+```bash
+mkdir -p build
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 -Isrc \
+  src/stb_impl.cpp src/v0_stitching.cpp src/orb.cpp src/matching.cpp \
+  src/homography.cpp src/warping.cpp src/blending.cpp \
+  -o build/v0_standalone
+```
+
+Khi compile cả `main.cu` và `v0_stitching.cpp` trong một target, cần macro như canonical command; nếu thiếu sẽ có hai định nghĩa `main()`. Không cần build system hoặc source copy thuật toán khác trong notebook.
+
+Ví dụ CLI cho ảnh PPM đã chuẩn bị:
+
+```bash
+./build/v0_stitching a.ppm b.ppm panorama.ppm metrics.json feather 3
+```
+
+Threshold của CLI tính bằng pixel ở kích thước ảnh thực tế. Notebook tự scale giá trị tham chiếu 3 px theo chiều rộng đầu vào/800; standalone binary nhận cùng tham số theo cùng quy ước.
 
 ### Kết quả sinh ra
 
@@ -124,7 +161,20 @@ src/
 └── notebook_support.py             # Build, chạy đo và xuất báo cáo
 ```
 
-**stb_impl.cpp** hiện triển khai I/O PPM; Python xử lý ảnh JPEG/PNG và trình bày kết quả trong notebook.
+**stb_impl.cpp** triển khai I/O binary P6 RGB8, với `maxval=255`. Helper Python giải mã JPEG/PNG và chuyển sang PPM trước khi gọi C++; không có mã stb được đóng gói. Thuật toán S1–S6 nằm trong các file C/C++ của `src/`, không có bản sao độc lập trong notebook.
+
+## Source provenance và kết quả lịch sử
+
+`source_hashes()` tiếp tục trả raw SHA-256 của chính bytes từng file trong manifest `src/*.*`. Helper bổ sung `normalized_source_hashes()`: chỉ thay cặp byte CRLF (`0D 0A`) thành LF (`0A`) trước khi hash. CR đơn, khoảng trắng, tabs, BOM và newline cuối file được giữ nguyên. Không sửa nội dung file nguồn.
+
+| Metadata | Raw SHA-256 | SHA-256 sau quy tắc CRLF→LF |
+|---|---|---|
+| `output/v0/environment.json` | `source_sha256` | `source_sha256_lf` |
+| Notebook, `metadata.lan_chay` của lần export mới | `nguon_sha256` | `nguon_sha256_lf` |
+
+Các record mới thêm `source_hash_normalization = "CRLF-to-LF-only-v1"`. Record cũ không có các field bổ sung vẫn được đọc theo raw hashes. Kiểm tra cuối lần chạy luôn yêu cầu **raw hashes khớp**; normalized hashes không cho phép bỏ qua thay đổi bytes sau khi đo. Normalized equality chỉ giải thích khác biệt line endings theo quy tắc trên, không chứng minh hai implementation tương đương về thuật toán.
+
+Notebook đang lưu trong Git là bằng chứng của lần chạy lịch sử và có thể khác source hiện tại sau hardening. Giữ nguyên outputs/hashes gốc; không chép hashes mới vào kết quả cũ. Khi chốt source để nộp, cần chạy lại notebook top-to-bottom từ đúng `src/` đó để tạo kết quả và provenance mới. Các diễn đạt cũ trong notebook về starter/sites cũng cần được cập nhật trong lần tái tạo báo cáo được cho phép, không sửa ngược bằng chứng lịch sử.
 
 ## Nhóm
 
@@ -137,7 +187,7 @@ src/
 ## Giới hạn và ghi nhận
 
 - V1/V2 là hướng phát triển; chưa có kernel CUDA hoặc kết quả tăng tốc GPU.
-- Các adapter **common.h**, **cuda_utils.cuh**, **versions.h**, **main.cu** và **stb_impl.cpp** do nhóm xây dựng; interface với starter chính thức của môn học chưa được xác nhận.
+- Giảng viên cung cấp PDF Midterm, không cung cấp Starter Notebook. Các interface **common.h**, **cuda_utils.cuh**, **versions.h**, **main.cu** và **stb_impl.cpp** do nhóm thiết kế; không có interface starter bổ sung để đối chiếu. Đây không phải tuyên bố giảng viên đã phê duyệt implementation của nhóm.
 - Sai số homography tổng hợp không bảo đảm chất lượng trên mọi ảnh thực tế; parallax và vật thể chuyển động vẫn có thể tạo bóng đôi.
 - Không tính PSNR/SSIM vì không có panorama chuẩn tương ứng cho ảnh thực tế.
 - Nhóm dùng AI hỗ trợ triển khai và biên soạn; các thành viên chịu trách nhiệm kiểm tra và giải thích nội dung.

@@ -418,7 +418,8 @@ struct ProjResult {
 
 // Project point (xb, yb) through H_B_to_A with explicit validity tracking.
 // Returns {px, py, true} on success, {0,0,false} on degeneracy or overflow.
-// Scale-invariant: result identical for H and c*H (c != 0, |c| in [1e-300, Inf)).
+// Pointwise validity only, not matrix invertibility. Scaling is subject to the
+// finite representation and normalization limits documented by project().
 static ProjResult projectInternal(const Mat3& H, double xb, double yb) {
     if (!std::isfinite(xb) || !std::isfinite(yb)) return {};
 
@@ -786,7 +787,8 @@ HomographyResult estimate(
         final_max_err      = refined_max_err;
         result.refinement_succeeded = true;
     } else {
-        // Fallback to best RANSAC hypothesis.
+        // Fallback to the already accepted RANSAC hypothesis. Neither a solver
+        // failure nor rejection of the refinement changes success into failure.
         final_H            = best_H;
         final_mask         = best_mask;
         final_inlier_count = best_inlier_count;

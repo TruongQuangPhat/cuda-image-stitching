@@ -89,6 +89,7 @@ Seam minimumErrorSeam(const WarpResult& warped, const std::array<double,3>& gain
     }
     Seam seam;
     if (x1 < x0) return seam;
+    // A nonempty overlap guarantees both mask populations are positive.
     seam.horizontal = std::abs(ay/na-by/nb) > std::abs(ax/na-bx/nb);
     seam.a_first = seam.horizontal ? ay/na <= by/nb : ax/na <= bx/nb;
     seam.along_start = seam.horizontal ? x0 : y0;
@@ -193,6 +194,7 @@ BlendResult blend(const WarpResult& warped, const BlendConfig& config) {
                 const int y = static_cast<int>(i / static_cast<std::size_t>(width));
                 const int along = (seam.horizontal ? x : y)-seam.along_start;
                 const int cross = seam.horizontal ? y : x;
+                // Every overlap pixel lies in the bounding box spanned by path.
                 const double side = (cross-seam.path[along]) * (seam.a_first ? 1.0 : -1.0);
                 alpha = config.seam_feather_radius == 0 ? (side <= 0 ? 1.0 : 0.0) :
                     std::clamp(0.5-side/(2*config.seam_feather_radius),0.0,1.0);

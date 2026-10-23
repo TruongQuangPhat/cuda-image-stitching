@@ -40,6 +40,8 @@ struct Match {
 struct MatchResult {
     std::vector<Match> matches;   // Matches that passed ratio test (and cross-check).
     bool   valid = true;          // False when inputs or config are invalid.
+    // valid=true with no matches is a normal result; it does not certify that
+    // there are enough correspondences for Homography estimation.
     std::string error_message;    // Non-empty when valid == false.
 };
 
@@ -56,7 +58,7 @@ int hammingDistance(const orb::Descriptor& a, const orb::Descriptor& b);
 //
 // On invalid config or mismatched keypoint/descriptor sizes, returns
 // MatchResult{.valid=false} with a descriptive error_message.
-// Does NOT throw exceptions.
+// Logical validation failures return a result; allocation exceptions may propagate.
 MatchResult match(const orb::DescriptionResult& desc_a,
                   const orb::DescriptionResult& desc_b,
                   const MatchingConfig& config = MatchingConfig{});
