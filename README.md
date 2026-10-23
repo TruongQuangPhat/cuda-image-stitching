@@ -1,276 +1,155 @@
-# CUDA Image Stitching
+# Ghép ảnh panorama — C++17 baseline và kế hoạch CUDA
 
-An image stitching project developed for **CSC14120 – Parallel Programming**. The project implements a sequential C++ baseline (V0) and aims to accelerate selected stages using CUDA.
+<p align="center">
+  <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-00599C?logo=c%2B%2B&logoColor=white">
+  <img alt="Pipeline" src="https://img.shields.io/badge/pipeline-CPU%20baseline-555555">
+  <img alt="CUDA status" src="https://img.shields.io/badge/CUDA-planned%20only-76B900?logo=nvidia&logoColor=white">
+  <img alt="Notebook" src="https://img.shields.io/badge/report-Jupyter-F37626?logo=jupyter&logoColor=white">
+  <img alt="Runtime" src="https://img.shields.io/badge/runtime-Colab%20%7C%20WSL-4285F4">
+</p>
 
-## Image Stitching Pipeline
+Dự án xây dựng baseline tuần tự để ghép hai ảnh có vùng chồng lấp thành panorama. Notebook đánh giá sai số hình học, chất lượng ảnh ghép và thời gian của sáu giai đoạn xử lý, từ đó đề xuất phạm vi tăng tốc GPU.
 
-The complete pipeline consists of six stages:
+> **Trạng thái:** các kết quả hiện tại thuộc V0 chạy trên CPU. CUDA mới là kế hoạch; repo chưa có kernel CUDA và chưa đo speedup GPU.
 
-1. **Feature Detection (S1):** Detect image keypoints using multiscale FAST corners and Harris score ranking.
-2. **Feature Description (S2):** Generate rotation-aware 256-bit binary descriptors (Rotated BRIEF).
-3. **Feature Matching (S3):** Match corresponding keypoints using Hamming distance and Lowe's 2-NN ratio test.
-4. **Homography Estimation (S4):** Estimate geometric transformation using RANSAC and Normalized DLT.
-5. **Image Warping (S5):** Align images using inverse projective mapping and bilinear interpolation.
-6. **Image Blending (S6):** Combine aligned images using multiband or feather blending.
+## Nội dung chính
 
-> **Note on stage numbering:** S1–S4 above represents the internal milestone numbering for the sequential baseline. In the official course project specification, Feature Matching corresponds to Stage 4 and Homography Estimation corresponds to Stage 5.
+- [Notebook báo cáo](Group09_Midterm.ipynb): phương pháp, đánh giá, biểu đồ và kết quả chạy.
+- **src/**: các module C++ của pipeline cùng mã điều phối thực nghiệm.
+- [Dataset và nguồn ảnh](#dataset): dữ liệu CMU đã chuẩn bị, xây dựng từ OpenPano.
+- [Cách chạy](#cách-chạy): Colab hoặc máy cá nhân có WSL.
 
----
+## Pipeline
 
-## Repository Structure
+| Bước | Phương pháp | Đầu ra |
+|---|---|---|
+| S1 — Phát hiện điểm | FAST-9 (ngưỡng 20), Harris, non-maximum suppression; tháp ảnh 8 mức, tỷ lệ 1,2, tối đa 2.000 điểm mỗi ảnh | Keypoints |
+| S2 — Mô tả điểm | Hướng intensity-centroid và rotated BRIEF 256 bit | Descriptors |
+| S3 — Ghép đặc trưng | Hamming distance vét cạn, Lowe ratio test 0,8, không cross-check | Các cặp khớp |
+| S4 — Ước lượng hình học | Normalized DLT, RANSAC 2.000 vòng, seed cố định, ngưỡng 3 px ở ảnh rộng 800 px | Homography B→A và inliers |
+| S5 — Warping | Inverse mapping và nội suy song tuyến tính | Hai ảnh trên cùng canvas |
+| S6 — Blending | Feather làm baseline; tùy chọn seam với feather bán kính 8 px và bù sáng | Panorama |
+
+Pipeline chạy tuần tự trên CPU. **main.cu** là entry point tương thích với cách tổ chức mã của nhóm, nhưng được biên dịch như C++ bằng **g++**; V0 không cần **nvcc** hay CUDA runtime.
+
+Homography phù hợp nhất khi cảnh gần phẳng hoặc máy ảnh chủ yếu xoay quanh cùng vị trí. Chuyển động, parallax và thay đổi phơi sáng vẫn có thể gây bóng đôi hoặc đường nối không đều.
+
+## Đánh giá
+
+Notebook chạy bốn cặp ảnh ở ba kích thước đầu vào (rộng 400, 800 và 1.200 px), với hai chế độ blending. Mỗi cấu hình có một lượt làm nóng và ba lượt đo, tổng cộng 72 lượt đo cho 24 cấu hình.
+
+Các số liệu gồm thời gian tiền xử lý, thời gian S1–S6, tổng thời gian, số keypoint/điểm khớp/inlier và sai số chiếu. Đọc ảnh, ghi ảnh, giải mã JPEG, biên dịch và khởi tạo tiến trình không nằm trong thời gian pipeline.
+
+Phần hình học kiểm tra bốn homography tổng hợp (tịnh tiến, xoay, đổi tỷ lệ và phối cảnh) trên lưới điểm độc lập. Ngưỡng kiểm tra nội bộ là sai số trung bình dưới 3 px và lớn nhất dưới 6 px. Kết quả này không đại diện cho mọi cảnh thực tế.
+
+Feather là baseline để phân tích CPU/GPU. Chế độ seam tìm đường nối có sai khác màu thấp và bù sáng RGB trong giới hạn 0,5–2; nếu không tìm được đường nối liên tục, chương trình dùng feather dự phòng. Giới hạn Amdahl trong notebook là ước lượng lý thuyết, không phải speedup CUDA đã đo.
+
+## Dataset
+
+Dự án dùng bốn cặp ảnh: CMU0 chuẩn, CMU1 chuẩn, CMU2 chuẩn và CMU0 khó. Mỗi cặp có ba kích thước đã chuẩn bị. Metadata nằm tại **dataset/metadata.csv** sau khi giải nén.
+
+- [Tải ImageStitching_Team_Dataset.zip](https://drive.google.com/file/d/11Nbg77zkOizdNcY5vEmlybP60KTv5NUk/view)
+- Nguồn ảnh: [OpenPano CMU, release 0.1](https://github.com/ppwwyyxx/OpenPano/releases/tag/0.1)
+- SHA-256 mong đợi của ZIP dữ liệu:
 
 ```text
-cuda-image-stitching/
-├── src/
-│   ├── orb.h
-│   ├── orb.cpp
-│   ├── matching.h
-│   ├── matching.cpp
-│   ├── homography.h
-│   └── homography.cpp
-├── tests/
-│   └── test_matching_homography.cpp
-├── scripts/
-│   ├── prepare_pgm.py
-│   └── run_matching_homography_tests.sh
-├── dataset/
-│   ├── metadata.csv
-│   ├── raw/
-│   └── prepared/
-├── .gitignore
-└── README.md
+2097dc6eeb3d339731541f94df0d3f44694b447bd6f5b9c6669959ac7269827
 ```
 
----
+Notebook kiểm tra SHA-256 trước khi giải nén. Nếu không tìm thấy dataset ở thư mục dự án hoặc thư mục cha, notebook sẽ thử tải từ Drive; trên Colab có thể chọn ZIP thủ công khi được nhắc. Thư mục **dataset/** được tạo lúc chạy và không được commit vào Git.
 
-## Module Overview & APIs
+> Hãy xác nhận các site CMU được dùng có phù hợp với site nhóm đã đăng ký theo yêu cầu môn học hay không.
 
-### 1. ORB Feature Extraction (S1–S2)
+## Cách chạy
 
-Implemented in [`src/orb.h`](src/orb.h) and [`src/orb.cpp`](src/orb.cpp).
-Namespace: `stitching::orb`.
+### Google Colab
 
-- **Stage 1 (Detection):** Grayscale conversion, Gaussian image pyramid, FAST-9 corner detection, non-maximum suppression (NMS), and Harris response filtering.
-- **Stage 2 (Description):** Intensity centroid orientation assignment and steered 256-bit BRIEF binary descriptors computed on blurred pyramid levels.
+Notebook xuất **Group09_Midterm.zip** ở cuối lần chạy. Nếu chưa có gói nguồn, chạy notebook một lần trong thư mục dự án đầy đủ trên máy cá nhân (có **src/** cạnh notebook); ZIP vừa tạo dùng làm gói đầu vào cho Colab.
 
-```cpp
-namespace stitching::orb {
+1. Mở **Group09_Midterm.ipynb** bằng Colab.
+2. Tải gói nguồn **Group09_Midterm.zip** vào thư mục **/content** qua **Files → Upload**. Gói cần có notebook ở thư mục gốc và thư mục **src/**.
+3. Chọn **Runtime → Run all** và chờ các ô chạy xong.
+4. Ô cuối kiểm tra tính nhất quán, lưu notebook đã chạy và tạo ZIP kết quả mới để tải xuống.
 
-struct GrayImage;
-struct Config;
-struct DetectionResult;
-struct DescriptionResult;
+Gói ZIP kết quả chứa notebook có output và các file trong **src/**. Các CSV, JSON và ảnh chi tiết được lưu riêng dưới **output/v0/**.
 
-// Convert packed RGB/RGBA buffer to owned grayscale:
-GrayImage toGrayscale(const std::uint8_t* data, int width, int height, int channels, std::size_t row_stride_bytes = 0);
+### Máy cá nhân
 
-// Stage 1: Detect multiscale FAST corners and rank by Harris response:
-DetectionResult detect(const GrayImage& grayscale, const Config& config = Config{});
+Yêu cầu:
 
-// Stage 2: Calculate intensity centroid orientations and build 256-bit steered BRIEF descriptors:
-DescriptionResult describe(const DetectionResult& detection, const Config& config = Config{});
+- Python 3.9 trở lên.
+- C++17: **g++** 10 trở lên hoặc **clang++** tương thích.
+- Python packages: Pillow, pandas, Matplotlib và Jupyter.
+- Trên Windows, cần WSL với **g++**; đặt repo trên ổ đĩa cục bộ để WSL truy cập được.
 
-// Stage 1 + Stage 2 convenience pipeline:
-DescriptionResult extract(const GrayImage& grayscale, const Config& config = Config{});
-
-}
-```
-
-#### ORB Usage Example
-
-```cpp
-#include "orb.h"
-
-stitching::orb::Config config;
-
-// gray_image is a valid stitching::orb::GrayImage (e.g. from orb::toGrayscale() or PGM loader):
-auto detection = stitching::orb::detect(gray_image, config);
-auto description = stitching::orb::describe(detection, config);
-
-// Alternatively, run both stages together:
-auto result = stitching::orb::extract(gray_image, config);
-```
-
-### 2. Feature Matching (S3)
-
-Implemented in [`src/matching.h`](src/matching.h) and [`src/matching.cpp`](src/matching.cpp).
-Namespace: `stitching::matching`.
-
-- **Hamming Distance:** Bitwise XOR followed by 256-bit population count.
-- **Brute-Force 2-NN Search:** Finds the two closest descriptors in image B for each descriptor in image A.
-- **Lowe's Ratio Test:** Accepts match only when $d_1 < \text{ratio\_threshold} \times d_2$ (default threshold = 0.8).
-- **Mutual Cross-Check (Optional):** Retains match $(i, j)$ only if descriptor $i$ is also the mutual nearest neighbor of descriptor $j$.
-
-| Function / Type | Description |
-|---|---|
-| `matching::hammingDistance(a, b)` | Hamming distance between two 256-bit descriptors in $[0, 256]$ |
-| `matching::match(desc_a, desc_b, config)` | Brute-force 2-NN matching with Lowe's ratio test and optional cross-check |
-| `matching::MatchingConfig` | Configuration (`ratio_threshold = 0.8f`, `cross_check = false`) |
-| `matching::Match` | Correspondence struct (`index_a`, `index_b`, `distance`, `distance2`) |
-| `matching::MatchResult` | Result struct (`matches`, `valid`, `error_message`) |
-
-### 3. Homography Estimation (S4)
-
-Implemented in [`src/homography.h`](src/homography.h) and [`src/homography.cpp`](src/homography.cpp).
-Namespace: `stitching::homography`.
-
-- **Hartley Normalized DLT:** Translates coordinates to centroid and scales mean distance to $\sqrt{2}$ to ensure numerical stability during Jacobi null-space eigensolving.
-- **Scale-Adaptive Degeneracy Detection:** Rejects collinear or coincident 4-point sample configurations before DLT evaluation.
-- **Deterministic RANSAC:** Iteratively tests 4-point hypotheses using a fixed RNG seed (`0xC5C14120u`) for reproducibility.
-- **Robust Inlier Evaluation:** Uses scale-invariant projection validity checks, avoiding floating-point overflow even with extreme thresholds.
-- **Inlier Refinement:** Re-estimates $H$ from all consensus inliers using Normalized DLT, falling back to the best hypothesis if refinement fails.
-
-| Function / Type | Description |
-|---|---|
-| `homography::estimate(matches, desc_a, desc_b, config)` | Estimates projective transformation $H_{B \to A}$ from matches |
-| `homography::project(H, x, y)` | Projects point $(x, y)$ through $H$ with scale-invariant normalization |
-| `homography::reprojectionError(H, xb, yb, xa, ya)` | Computes Euclidean reprojection error $\|x_A - \text{project}(H, x_B)\|$ |
-| `homography::HomographyConfig` | RANSAC iterations (2000), reprojection threshold (3.0 px), min inliers (4), random seed |
-| `homography::HomographyResult` | Matrix $H$ (row-major), `valid`, `inlier_mask`, `num_inliers`, `inlier_ratio`, error stats |
-
----
-
-## Build Requirements
-
-- **C++ Compiler:** Clang++ (LLVM $\ge$ 14) or GCC ($\ge$ 10) supporting **C++17**.
-- **Build Flags:** `-std=c++17 -Wall -Wextra -Wpedantic -Werror -O2`.
-- **Operating System:** Linux or macOS (POSIX compliant).
-- **External Dependencies:** Zero third-party computer vision libraries (no OpenCV, Eigen, or CUDA required for CPU V0).
-- **Python (Dataset conversion):** Python 3.8+ with `Pillow` (PIL) for generating PGM test fixtures.
-
----
-
-## Build & Run Tests
-
-### 1. Automated Verification Script
-
-Run the automated script to prepare test fixtures, build both release and sanitizer targets in `build/`, and execute all 101 test cases:
+Cài package Python và mở notebook:
 
 ```bash
-# Full verification (Dataset prep + Release tests + ASan/UBSan):
-./scripts/run_matching_homography_tests.sh
-
-# Release-only verification (skips ASan/UBSan):
-RUN_SANITIZERS=0 ./scripts/run_matching_homography_tests.sh
+python -m pip install pillow pandas matplotlib jupyter
+jupyter notebook Group09_Midterm.ipynb
 ```
 
-### 2. Manual Build Commands
+Khi notebook chạy, helper sẽ biên dịch V0 với **-std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror**, chạy thực nghiệm và lưu kết quả dưới **output/v0/**. Không cần cài OpenCV, Eigen hay CUDA Toolkit cho baseline CPU.
 
-To build and run manually into the git-ignored `build/` directory:
+### Kết quả sinh ra
 
-```bash
-mkdir -p build
-
-# Release build:
-clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 \
-    -Isrc \
-    tests/test_matching_homography.cpp \
-    src/orb.cpp \
-    src/matching.cpp \
-    src/homography.cpp \
-    -o build/test_matching_homography
-
-./build/test_matching_homography
-
-# Sanitizer build (AddressSanitizer + UndefinedBehaviorSanitizer):
-clang++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -O1 \
-    -fsanitize=address,undefined -g \
-    -Isrc \
-    tests/test_matching_homography.cpp \
-    src/orb.cpp \
-    src/matching.cpp \
-    src/homography.cpp \
-    -o build/test_matching_homography_asan
-
-./build/test_matching_homography_asan
+```text
+output/v0/
+├── environment.json
+├── summary.csv
+├── timings.csv
+├── synthetic/
+│   └── suite.json
+└── <pair>/<resolution>/<mode>/
+    ├── panorama.png
+    ├── run_1.json
+    └── ...
 ```
+
+**summary.csv** tổng hợp từng cấu hình; **timings.csv** lưu từng lượt đo; **synthetic/suite.json** lưu phép kiểm tra hình học. **build/**, **dataset/**, **output/**, ZIP và cache Python được bỏ qua bởi **.gitignore**.
+
+## Cấu trúc mã nguồn
+
+```text
+src/
+├── orb.cpp / orb.h                 # S1–S2: phát hiện và mô tả đặc trưng
+├── matching.cpp / matching.h       # S3: ghép descriptors
+├── homography.cpp / homography.h   # S4: DLT và RANSAC
+├── warping.cpp / warping.h         # S5: biến đổi ảnh
+├── blending.cpp / blending.h       # S6: feather và seam
+├── v0_stitching.cpp                # Điều phối pipeline và ghi metrics
+├── main.cu                         # Entry point V0, biên dịch như C++
+├── common.h / cuda_utils.cuh       # I/O PPM và nhận diện chế độ biên dịch
+├── versions.h / stb_impl.cpp       # Entry point và I/O PPM
+└── notebook_support.py             # Build, chạy đo và xuất báo cáo
+```
+
+**stb_impl.cpp** hiện triển khai I/O PPM; Python xử lý ảnh JPEG/PNG và trình bày kết quả trong notebook.
+
+## Nhóm
+
+| Mã số | Thành viên | Phụ trách |
+|---|---|---|
+| 23120318 | TRƯƠNG QUANG PHÁT | S1–S2 |
+| 23120329 | CHÂU HUỲNH PHÚC | S3–S4 |
+| 23120334 | HUỲNH TẤN PHƯỚC | S5–S6 và tích hợp |
+
+## Giới hạn và ghi nhận
+
+- V1/V2 là hướng phát triển; chưa có kernel CUDA hoặc kết quả tăng tốc GPU.
+- Các adapter **common.h**, **cuda_utils.cuh**, **versions.h**, **main.cu** và **stb_impl.cpp** do nhóm xây dựng; interface với starter chính thức của môn học chưa được xác nhận.
+- Sai số homography tổng hợp không bảo đảm chất lượng trên mọi ảnh thực tế; parallax và vật thể chuyển động vẫn có thể tạo bóng đôi.
+- Không tính PSNR/SSIM vì không có panorama chuẩn tương ứng cho ảnh thực tế.
+- Nhóm dùng AI hỗ trợ triển khai và biên soạn; các thành viên chịu trách nhiệm kiểm tra và giải thích nội dung.
+
+## Tài liệu tham khảo
+
+- Rublee et al. (2011), *ORB: An efficient alternative to SIFT*; Rosten & Drummond (2006), *Machine learning for high-speed corner detection*.
+- Lowe (2004), *Distinctive Image Features from Scale-Invariant Keypoints*.
+- Hartley & Zisserman (2004), *Multiple View Geometry in Computer Vision*.
+- Fischler & Bolles (1981), *Random Sample Consensus*.
+- Szeliski (2022), *Computer Vision: Algorithms and Applications*, 2nd edition.
+- [Mã nguồn nền tảng của nhóm](https://github.com/TruongQuangPhat/cuda-image-stitching) và [OpenPano](https://github.com/ppwwyyxx/OpenPano/releases/tag/0.1).
 
 ---
-
-## Dataset Preparation
-
-The benchmark dataset configuration is specified in `dataset/metadata.csv` (12 configurations covering CMU0, CMU1, and CMU2 across small, medium, and large resolutions).
-
-Before executing dataset integration tests on a fresh clone or export:
-
-```bash
-# Converts referenced JPEG pairs to grayscale P5 PGM fixtures:
-python3 scripts/prepare_pgm.py
-```
-
----
-
-## Stage 4 → Stage 5 (Image Warping) Handoff Guide
-
-To integrate the estimated Homography into Stage 5 (Image Warping):
-
-```cpp
-#include "matching.h"
-#include "homography.h"
-#include "orb.h"
-
-// Example function illustrating the S3 -> S4 -> S5 pipeline handoff:
-bool computeWarpingHomography(
-    const stitching::orb::DescriptionResult& desc_a,
-    const stitching::orb::DescriptionResult& desc_b,
-    stitching::homography::HomographyResult& out_homo_res) {
-
-    // 1. Run Feature Matching (Stage 3)
-    stitching::matching::MatchingConfig match_cfg;
-    match_cfg.ratio_threshold = 0.8f;
-    match_cfg.cross_check = false;
-
-    const auto match_res = stitching::matching::match(desc_a, desc_b, match_cfg);
-
-    // Note on match_res.valid:
-    // match_res.valid is false ONLY when inputs or MatchingConfig are invalid
-    // (e.g. ratio_threshold <= 0 or keypoint/descriptor size mismatch).
-    if (!match_res.valid) {
-        // Invalid matching input or configuration: inspect match_res.error_message
-        return false;
-    }
-
-    // A valid matching result may still contain fewer than 4 matches if the scene has low overlap:
-    if (match_res.matches.size() < 4) {
-        // Insufficient correspondences for homography estimation (DLT requires >= 4)
-        return false;
-    }
-
-    // 2. Run Homography Estimation (Stage 4)
-    stitching::homography::HomographyConfig homo_cfg;
-    homo_cfg.ransac_iterations = 2000;
-    homo_cfg.reprojection_threshold = 3.0; // In pixels
-    homo_cfg.min_inliers = 4;
-    homo_cfg.min_inlier_ratio = 0.0;       // Default: 0.0 (disabled)
-
-    const auto homo_res = stitching::homography::estimate(
-        match_res.matches, desc_a, desc_b, homo_cfg);
-
-    // 3. Mandatory validity gate before warping
-    if (!homo_res.valid) {
-        // FailureReason: TooFewMatches, AllHypothesesFailed, TooFewInliers, etc.
-        // Inspect homo_res.failure_reason and homo_res.error_message
-        return false;
-    }
-
-    out_homo_res = homo_res;
-    return true;
-}
-```
-
-### Homography Convention & Warping Specifications
-
-- **Direction:** $H_{B \to A}$ maps points from image B to image A: $x_A \sim H_{B \to A} x_B$.
-- **Storage:** `homo_res.H` is a `std::array<double, 9>` stored in row-major order:
-  $$\begin{bmatrix} H[0] & H[1] & H[2] \\ H[3] & H[4] & H[5] \\ H[6] & H[7] & H[8] \end{bmatrix}$$
-- **Inverse Warping:** To render image B onto the canvas of image A, inverse mapping is applied for each canvas pixel $(x_A, y_A)$: compute $x_B = \text{inv}(H) x_A$ and sample pixel intensities via bilinear interpolation in image B.
-- **Inlier Correspondences:** `homo_res.inlier_mask[k] == true` indicates that `match_res.matches[k]` is an inlier consistent with $H$.
-- **Mathematical Validity vs. Visual Quality:** `homo_res.valid == true` certifies that RANSAC discovered a mathematically consistent homography meeting the inlier thresholds. It does not guarantee that the final stitched panorama is free from parallax or illumination seams (which must be handled by Stage 5 warping and Stage 6 multiband/feather blending).
-
----
-
-## Authors & Acknowledgments
-
-- **Author:** Truong Quang Phat (23120318)
-- **Course:** CSC14120 – Parallel Programming (VNU-HCM University of Science)
-- **AI-Assisted Development:** Implemented with Antigravity (Google DeepMind). All algorithms, numerical safeguards, and test coverage have been independently verified per academic integrity requirements.
+<p align="center"><sub>Group09 · Midterm · V0 CPU</sub></p>

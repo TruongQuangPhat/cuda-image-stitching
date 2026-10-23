@@ -1,30 +1,14 @@
-# Build artifacts and binaries
-*.o
-*.a
-*.so
-*.dylib
-*.out
-*.dSYM/
+# Thư mục sinh ra khi chạy notebook
 build/
-bin/
-
-# Test binaries
-tests/test_matching_homography
-tests/test_matching_homography_asan
-tests/test_s3_s4
-tests/test_s3_s4_asan
-tests/debug_*
-
-# Generated dataset fixtures
-*.pgm
-
-# Archives and release packages
+dataset/
+output/
+__pycache__/
+*.pyc
+*.o
 *.zip
-*.tar.gz
+*.tmp
 
-# IDE and OS
+# Cấu hình máy cá nhân
 .DS_Store
 .vscode/
 .idea/
-*.swp
-*~

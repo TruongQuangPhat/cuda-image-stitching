@@ -1,15 +1,6 @@
-// Feature Matching (Brute-Force Hamming + 2-NN Ratio Test + Cross-Check):
-// educational implementation for CSC14120 – Parallel Programming, V0 sequential
-// baseline.
-//
-// Authors: Truong Quang Phat (23120318)
-// AI-assisted development: implemented with Antigravity (Google DeepMind), reviewed
-// and corrected by the author. All algorithmic decisions and results are verified by
-// the team per course academic integrity requirements.
-//
-// Algorithm references:
-//   - Lowe, D.G. (2004). Distinctive image features from scale-invariant keypoints.
-//     International Journal of Computer Vision, 60(2), 91-110.
+// Authors: TRƯƠNG QUANG PHÁT (23120318); CHÂU HUỲNH PHÚC (23120329, S3).
+// Brute-force Hamming matching, ratio test and optional cross-check.
+// Reference: Lowe (2004), Distinctive image features from scale-invariant keypoints.
 
 #include "matching.h"
 

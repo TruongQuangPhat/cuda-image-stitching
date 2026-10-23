@@ -1,7 +1,9 @@
+// Authors: TRƯƠNG QUANG PHÁT (23120318), S1-S2.
+// ORB-style detection and description interfaces.
+// References: Rublee et al., ORB (2011); Rosten and Drummond, FAST (2006).
+
 #pragma once
 
-// Stages 1-2 (ORB detection and description): original educational implementation.
-// Algorithm references: Rublee et al., ORB, ICCV 2011; Rosten et al., FAST.
 
 #include <array>
 #include <cstddef>

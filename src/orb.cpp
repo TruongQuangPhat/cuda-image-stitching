@@ -1,5 +1,6 @@
-// Stages 1-2 (ORB detection and description): original educational implementation.
-// Algorithm references: Rublee et al., ORB, ICCV 2011; Rosten et al., FAST.
+// Authors: TRƯƠNG QUANG PHÁT (23120318), S1-S2.
+// FAST/Harris detection and oriented BRIEF descriptors.
+// References: Rublee et al., ORB (2011); Rosten and Drummond, FAST (2006).
 
 #include "orb.h"
 
