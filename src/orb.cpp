@@ -400,7 +400,6 @@ DetectionResult detect(const GrayImage& grayscale, const Config& config) {
     return output;
 }
 
-
 namespace {
 
 constexpr int kPatchRadius = 15;

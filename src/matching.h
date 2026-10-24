@@ -22,9 +22,7 @@ struct MatchingConfig {
     bool cross_check = false;
 };
 
-// One accepted correspondence between ORB keypoints in image A and image B.
-// index_a and index_b are valid indices into the DescriptionResult::keypoints
-// (and ::descriptors) vectors passed to match().
+// Indices refer to the aligned keypoint/descriptor vectors passed to match().
 struct Match {
     std::size_t index_a   = 0;
     std::size_t index_b   = 0;
@@ -43,15 +41,9 @@ struct MatchResult {
 // Hamming distance between 256-bit descriptors, in [0, 256].
 int hammingDistance(const orb::Descriptor& a, const orb::Descriptor& b);
 
-// Run brute-force 2-NN matching followed by Lowe's ratio test.
-//
-// Runtime preconditions:
-//   - desc_a.keypoints.size() == desc_a.descriptors.size()
-//   - desc_b.keypoints.size() == desc_b.descriptors.size()
-//   - 0 < config.ratio_threshold < 1
-//
-// Invalid config or misaligned inputs return valid=false with error_message.
-// Allocation exceptions may propagate.
+// Brute-force 2-NN, ratio test, then optional cross-check.
+// Requires aligned keypoints/descriptors and 0 < ratio_threshold < 1.
+// Invalid inputs return valid=false with error_message; allocation may throw.
 MatchResult match(const orb::DescriptionResult& desc_a,
                   const orb::DescriptionResult& desc_b,
                   const MatchingConfig& config = MatchingConfig{});

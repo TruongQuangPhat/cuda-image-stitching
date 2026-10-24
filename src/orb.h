@@ -4,7 +4,6 @@
 
 #pragma once
 
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -17,7 +16,6 @@ struct GrayImage {
     int height = 0;
     std::vector<std::uint8_t> pixels;
 };
-
 
 struct Keypoint {
     float x = 0.0f;
@@ -59,38 +57,29 @@ struct DescriptionResult {
     std::vector<Descriptor> descriptors;
 };
 
-// Convert RGB, RGBA or 1-channel interleaved 8-bit input into owned grayscale.
-// Channels: 1, 3, or 4. The 3/4-channel layout is RGB/RGBA, not BGR/BGRA.
-// Pass row_stride_bytes = 0 for a tightly packed source buffer.
-// Caller owns data and must provide (height-1)*effective_stride + width*channels
-// readable bytes. The full span must fit ptrdiff_t; unused final-row padding is
-// excluded. Actual allocation capacity cannot be validated from a raw pointer.
+// Convert grayscale, RGB or RGBA input to owned grayscale; stride 0 means packed.
+// Caller supplies (height-1)*stride + width*channels readable bytes, fitting ptrdiff_t.
+// The raw pointer's allocation size cannot be checked here.
 GrayImage toGrayscale(const std::uint8_t* data,
                       int width, int height, int channels,
                       std::size_t row_stride_bytes = 0);
 
-// Stage 1 only: pyramid -> FAST-9 -> 3x3 NMS -> Harris ranking -> quotas.
-// Validates the image and every Config field. Detection-only use permits odd
-// patch sizes other than 31; use 31 when chaining with this rBRIEF descriptor.
-// Keypoint coordinates are in original-image space; output owns its buffers.
-// An empty keypoint list is valid (including max_features == 0).
+// S1: pyramid -> FAST-9 -> 3x3 NMS -> Harris ranking -> per-level quotas.
+// Validates the image/config; returns owned buffers and original-image coordinates.
+// Empty keypoints are valid. Detection permits odd patch sizes; S2 requires 31.
 DetectionResult detect(const GrayImage& grayscale,
                        const Config& config = Config{});
 
-// Stage 2: calculate intensity-centroid orientations on original pyramid
-// levels, then build 256-bit steered BRIEF descriptors on blurred levels.
-// Keypoints and descriptors are aligned by index. Does not modify detection.
-// Only config.patch_size is used and must equal 31; detection-only fields are
-// ignored. Requires a nonempty pyramid and valid octave, scale, coordinates and
-// patch bounds for every keypoint. Empty keypoints yield aligned empty vectors.
-// Malformed inputs/configurations throw; detection is left unchanged.
+// S2: intensity-centroid orientation, then steered BRIEF on blurred pyramid levels.
+// Returns aligned keypoints/descriptors without modifying detection; empty points are valid.
+// Only config.patch_size is used (must be 31). Requires a nonempty pyramid and valid
+// octave, scale, coordinates and patch bounds; malformed inputs throw.
 DescriptionResult describe(const DetectionResult& detection,
                            const Config& config = Config{});
 
-// Call detect() and describe() separately when profiling each stage.
-// Uses the same Config for both stages. Checks description compatibility before
-// detection; then applies detect()'s image/config validation.
+// Combined S1/S2 with the same Config; checks descriptor compatibility first.
+// Call detect() and describe() separately for per-stage timing.
 DescriptionResult extract(const GrayImage& grayscale,
                           const Config& config = Config{});
 
-} 
+}

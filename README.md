@@ -14,7 +14,7 @@ Dự án xây dựng baseline tuần tự để ghép hai ảnh có vùng chồn
 
 ## Nội dung chính
 
-- [Notebook báo cáo](Group09_Midterm.ipynb): phương pháp, đánh giá, biểu đồ và kết quả chạy.
+- [Notebook báo cáo](Group09_Midterm.ipynb): ảnh trước/sau khi ghép, thông số, metrics và thời gian xử lý.
 - **src/**: các module C++ của pipeline cùng mã điều phối thực nghiệm.
 - [Dataset và nguồn ảnh](#dataset): dữ liệu CMU đã chuẩn bị, xây dựng từ OpenPano.
 - [Cách chạy](#cách-chạy): Colab hoặc máy cá nhân có WSL.
@@ -73,7 +73,7 @@ Notebook xuất **Group09_Midterm.zip** ở cuối lần chạy. Nếu chưa có
 3. Chọn **Runtime → Run all** và chờ các ô chạy xong.
 4. Ô cuối kiểm tra tính nhất quán, lưu notebook đã chạy và tạo ZIP kết quả mới để tải xuống.
 
-Gói ZIP kết quả chứa notebook có output và các file trong **src/**. Các CSV, JSON và ảnh chi tiết được lưu riêng dưới **output/v0/**.
+Gói ZIP kết quả chứa notebook có output, mã nguồn **src/** và ảnh thử **examples/campus.png**. Mục cuối notebook cắt ảnh này thành hai crop có overlap rồi ghép bằng V0. Các CSV, JSON và ảnh chi tiết được lưu riêng dưới **output/v0/**; phép thử ảnh cắt nằm trong **output/v0/overlap_demo/**.
 
 ### Máy cá nhân
 
@@ -81,13 +81,13 @@ Yêu cầu:
 
 - Python 3.9 trở lên.
 - C++17: **g++** 10 trở lên hoặc **clang++** tương thích.
-- Python packages: Pillow, pandas, Matplotlib và Jupyter.
+- Python packages: Pillow, pandas và Jupyter.
 - Trên Windows, cần WSL với **g++**; đặt repo trên ổ đĩa cục bộ để WSL truy cập được.
 
 Cài package Python và mở notebook:
 
 ```bash
-python -m pip install pillow pandas matplotlib jupyter
+python -m pip install pillow pandas jupyter
 jupyter notebook Group09_Midterm.ipynb
 ```
 
@@ -158,6 +158,7 @@ src/
 ├── main.cu                         # Entry point V0, biên dịch như C++
 ├── common.h / cuda_utils.cuh       # I/O PPM và nhận diện chế độ biên dịch
 ├── versions.h / stb_impl.cpp       # Entry point và I/O PPM
+├── notebook_setup.py               # Thiết lập môi trường và đọc gói nguồn trên Colab
 └── notebook_support.py             # Build, chạy đo và xuất báo cáo
 ```
 
@@ -190,7 +191,6 @@ Notebook đang lưu trong Git là bằng chứng của lần chạy lịch sử 
 - Giảng viên cung cấp PDF Midterm, không cung cấp Starter Notebook. Các interface **common.h**, **cuda_utils.cuh**, **versions.h**, **main.cu** và **stb_impl.cpp** do nhóm thiết kế; không có interface starter bổ sung để đối chiếu. Đây không phải tuyên bố giảng viên đã phê duyệt implementation của nhóm.
 - Sai số homography tổng hợp không bảo đảm chất lượng trên mọi ảnh thực tế; parallax và vật thể chuyển động vẫn có thể tạo bóng đôi.
 - Không tính PSNR/SSIM vì không có panorama chuẩn tương ứng cho ảnh thực tế.
-- Nhóm dùng AI hỗ trợ triển khai và biên soạn; các thành viên chịu trách nhiệm kiểm tra và giải thích nội dung.
 
 ## Tài liệu tham khảo
 

@@ -49,13 +49,10 @@ enum class FailureReason {
 
 std::string failureReasonToString(FailureReason r);
 
-// Row-major H_B_to_A: x_A ~ H_B_to_A * x_B, indexed by row*3+col.
-// estimate() success: valid=true, failure_reason=None, H/mask/count/ratio/errors agree.
-// estimate() failure: valid=false, failure_reason!=None, H stays zero; mask/count/ratio
-// may describe a rejected hypothesis. Never use H when valid=false.
-// A default result is also invalid, although its failure_reason starts at None.
-// Gate on valid, not mask population or message emptiness. Stage 5 additionally
-// checks invertibility, the projective horizon and canvas bounds.
+// Row-major H_B_to_A: x_A ~ H * x_B. Use H only when valid is true.
+// Success returns consistent H, inliers and errors. Failure leaves H zero;
+// mask/count/ratio may still describe a rejected hypothesis.
+// S5 separately checks invertibility, the projective horizon and canvas bounds.
 struct HomographyResult {
     std::array<double, 9> H{};
 
@@ -84,27 +81,19 @@ struct HomographyResult {
     bool refinement_succeeded = false;
 };
 
-// Estimate H_B_to_A using matches and the same DescriptionResult objects passed to match().
-// Logical failures are communicated through valid / failure_reason. Allocation
-// exceptions may propagate. valid means the configured consensus policy passed;
-// it does not certify image-wide quality, coverage or a bounded warp canvas.
+// Estimate B->A from the same descriptor sets used by match().
+// Check valid/failure_reason for consensus failure; allocation may throw.
+// Accepted consensus does not guarantee image-wide quality or a bounded canvas.
 HomographyResult estimate(
     const std::vector<matching::Match>& matches,
     const orb::DescriptionResult&       desc_a,
     const orb::DescriptionResult&       desc_b,
     const HomographyConfig&             config = HomographyConfig{});
 
-// Project a 2-D point through H (performs homogeneous division).
-// Returns Euclidean coordinates at this point; does not check matrix
-// invertibility. Even a singular matrix may project an individual point.
-// Scaling H preserves the result within floating-point precision when both
-// representations remain finite, max(abs(H)) >= 1e-300, and projection is valid.
-// Throws std::domain_error if:
-//   - max(abs(H)) < 1e-300 (including the zero matrix),
-//   - H contains non-finite values,
-//   - input coordinates are non-finite,
-//   - homogeneous denominator is near zero relative to coordinate scale,
-//   - projected coordinates are non-finite.
+// Project a point with homogeneous division; this does not check H invertibility.
+// Scale-invariant within floating-point precision for finite H with max(abs(H)) >= 1e-300.
+// Throws domain_error for non-finite inputs/output, a smaller H, or a denominator
+// near zero relative to coordinate scale.
 struct Point2d { double x, y; };
 Point2d project(const std::array<double, 9>& H, double x, double y);
 
