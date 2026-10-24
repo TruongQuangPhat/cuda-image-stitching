@@ -1,6 +1,5 @@
 // Authors: HUỲNH TẤN PHƯỚC (23120334), integration.
 // Compile-time CUDA detection; V0 does not require the CUDA runtime.
-// Compatibility with the course starter interface has not been verified.
 
 #pragma once
 namespace stitching {

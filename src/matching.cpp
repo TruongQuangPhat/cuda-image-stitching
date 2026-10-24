@@ -28,7 +28,6 @@ inline int popcount64(std::uint64_t v) {
 #endif
 }
 
-// Validate MatchingConfig. Returns false and sets msg if invalid.
 bool validateMatchingConfig(const stitching::matching::MatchingConfig& cfg,
                             std::string& msg) {
     if (!std::isfinite(cfg.ratio_threshold)) {
@@ -65,7 +64,6 @@ int hammingDistance(const orb::Descriptor& a, const orb::Descriptor& b) {
 MatchResult match(const orb::DescriptionResult& desc_a,
                   const orb::DescriptionResult& desc_b,
                   const MatchingConfig& config) {
-    // Validate configuration.
     {
         std::string cfg_err;
         if (!validateMatchingConfig(config, cfg_err)) {
@@ -73,7 +71,6 @@ MatchResult match(const orb::DescriptionResult& desc_a,
         }
     }
 
-    // Validate that keypoints and descriptors are aligned.
     if (desc_a.keypoints.size() != desc_a.descriptors.size()) {
         return {
             {}, false,
@@ -93,14 +90,14 @@ MatchResult match(const orb::DescriptionResult& desc_a,
     MatchResult result;
     result.valid = true;
 
-    // Need at least 2 descriptors in B for a meaningful ratio test.
+    // The ratio test requires two B descriptors.
     if (na == 0 || nb < 2) {
-        return result;  // valid=true, no matches
+        return result;
     }
 
     result.matches.reserve(na);
 
-    // Forward matching: A -> B (find 2 nearest neighbors in B for each in A).
+    // Forward 2-NN search: A -> B.
     for (std::size_t i = 0; i < na; ++i) {
         int d1 = std::numeric_limits<int>::max();
         int d2 = std::numeric_limits<int>::max();
@@ -118,8 +115,7 @@ MatchResult match(const orb::DescriptionResult& desc_a,
             }
         }
 
-        // Ratio test: d1 < ratio_threshold * d2.
-        // Guard against d2 == 0 (ambiguous match - both nearest neighbors identical).
+        // A zero-distance runner-up makes the match ambiguous.
         if (d2 == 0) continue;
         if (static_cast<float>(d1) < config.ratio_threshold *
                                      static_cast<float>(d2)) {
@@ -127,11 +123,8 @@ MatchResult match(const orb::DescriptionResult& desc_a,
         }
     }
 
-    // Cross-check: keep only mutual nearest neighbors.
-    // For each accepted forward match A[i] -> B[j], verify that the nearest
-    // neighbor of B[j] in A is also A[i].
+    // Keep mutual nearest neighbors after the ratio test.
     if (config.cross_check && !result.matches.empty()) {
-        // Build reverse best-match: for each descriptor in B, find nearest in A.
         std::vector<std::size_t> rev_best(nb, 0);
         for (std::size_t j = 0; j < nb; ++j) {
             int best_d = std::numeric_limits<int>::max();
@@ -144,7 +137,6 @@ MatchResult match(const orb::DescriptionResult& desc_a,
             rev_best[j] = best_i;
         }
 
-        // Filter: keep only matches where forward and reverse agree.
         std::vector<Match> filtered;
         filtered.reserve(result.matches.size());
         for (const auto& m : result.matches) {

@@ -15,15 +15,10 @@ namespace stitching::matching {
 
 // Configuration for brute-force 2-NN matching with Lowe's ratio test.
 struct MatchingConfig {
-    // Lowe's ratio test threshold: accept match only when d1 < ratio_threshold * d2.
-    // Must satisfy 0 < ratio_threshold < 1.
-    // Values outside this range cause match() to return valid=false.
+    // Accept d1 < ratio_threshold * d2; require 0 < ratio_threshold < 1.
     float ratio_threshold = 0.8f;
 
-    // Cross-check (mutual nearest neighbor filter).
-    // When true, a forward match A[i]->B[j] is kept only if B[j]'s nearest
-    // neighbor in A is also A[i]. Applied AFTER the ratio test.
-    // Default false (V0 baseline).
+    // After the ratio test, keep A[i]->B[j] only if B[j]'s nearest neighbor is A[i].
     bool cross_check = false;
 };
 
@@ -31,8 +26,8 @@ struct MatchingConfig {
 // index_a and index_b are valid indices into the DescriptionResult::keypoints
 // (and ::descriptors) vectors passed to match().
 struct Match {
-    std::size_t index_a   = 0;  // Index into image-A DescriptionResult.
-    std::size_t index_b   = 0;  // Index into image-B DescriptionResult.
+    std::size_t index_a   = 0;
+    std::size_t index_b   = 0;
     int         distance  = 0;  // Hamming distance of the winning pair (d1).
     int         distance2 = 0;  // Hamming distance of the runner-up (d2 >= d1).
 };
@@ -45,20 +40,18 @@ struct MatchResult {
     std::string error_message;    // Non-empty when valid == false.
 };
 
-// Compute the Hamming distance between two 256-bit ORB descriptors.
-// Result is always in [0, 256].
+// Hamming distance between 256-bit descriptors, in [0, 256].
 int hammingDistance(const orb::Descriptor& a, const orb::Descriptor& b);
 
 // Run brute-force 2-NN matching followed by Lowe's ratio test.
 //
-// Preconditions (both checked at runtime):
+// Runtime preconditions:
 //   - desc_a.keypoints.size() == desc_a.descriptors.size()
 //   - desc_b.keypoints.size() == desc_b.descriptors.size()
 //   - 0 < config.ratio_threshold < 1
 //
-// On invalid config or mismatched keypoint/descriptor sizes, returns
-// MatchResult{.valid=false} with a descriptive error_message.
-// Logical validation failures return a result; allocation exceptions may propagate.
+// Invalid config or misaligned inputs return valid=false with error_message.
+// Allocation exceptions may propagate.
 MatchResult match(const orb::DescriptionResult& desc_a,
                   const orb::DescriptionResult& desc_b,
                   const MatchingConfig& config = MatchingConfig{});

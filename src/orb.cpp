@@ -70,7 +70,7 @@ inline int clampTo(std::int64_t value, int high) {
         std::min(value, static_cast<std::int64_t>(high))));
 }
 
-// A small binomial Gaussian filter reduces aliasing before downsampling.
+// Binomial 5x5 filter for pyramid downsampling and descriptor smoothing.
 GrayImage blur5x5(const GrayImage& src) {
     constexpr std::array<int, 5> kWeights = {1, 4, 6, 4, 1};
     GrayImage dst{src.width, src.height, {}};
@@ -146,7 +146,7 @@ std::vector<PyramidLevel> buildPyramid(const GrayImage& image, const Config& c) 
         if (c.edge_threshold > (width - 1) / 2 ||
             c.edge_threshold > (height - 1) / 2) break;
 
-        // Construct from the preceding level for predictable filtering cost.
+        // Build each level from the preceding one.
         GrayImage filtered = blur5x5(pyramid.back().image);
         pyramid.push_back({resizeBilinear(filtered, width, height), scale});
     }
@@ -416,9 +416,7 @@ struct PatternPair {
     PatternPoint b;
 };
 
-// Fixed, reproducible sample pattern. The reference ORB implementation uses
-// its own learned pattern; this independent rBRIEF pattern is NOT bitwise
-// compatible with OpenCV descriptors, but is shared by every image in this V0.
+// Fixed rBRIEF pattern shared by all images; not bitwise compatible with OpenCV ORB.
 std::uint32_t nextRandom(std::uint32_t& state) {
     state ^= state << 13;
     state ^= state >> 17;
@@ -468,7 +466,7 @@ float computeOrientation(const GrayImage& img, int cx, int cy) {
             m01 += static_cast<std::int64_t>(dy) * value;
         }
     }
-    // A truly symmetric patch has no preferred direction.
+    // Zero moments leave the orientation undefined; use angle zero.
     if (m10 == 0 && m01 == 0) return 0.0f;
     return std::atan2(static_cast<float>(m01), static_cast<float>(m10));
 }
@@ -496,7 +494,7 @@ Descriptor computeDescriptor(const GrayImage& blurred, int cx, int cy,
     return descriptor;
 }
 
-// Reject malformed external inputs, rather than risk going outside the patch.
+// Validate external keypoints before sampling their descriptor patches.
 std::pair<int, int> keypointInLevel(const Keypoint& kp,
                                     const PyramidLevel& level) {
     validateImage(level.image);

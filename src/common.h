@@ -1,6 +1,5 @@
 // Authors: HUỲNH TẤN PHƯỚC (23120334), integration.
 // PPM input/output declarations used by V0.
-// Compatibility with the course starter interface has not been verified.
 
 #pragma once
 #include "warping.h"

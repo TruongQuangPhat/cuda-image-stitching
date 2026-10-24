@@ -24,8 +24,7 @@ struct BlendResult {
 enum class BlendMode { Feather, MinimumErrorSeam };
 struct BlendConfig {
     BlendMode mode = BlendMode::Feather;
-    // Zero selects a single source on each side of the seam, avoiding averaging
-    // displaced objects. A positive value feathers within this many pixels.
+    // Zero selects one source per side; positive values feather within this radius in pixels.
     double seam_feather_radius = 0.0;
     // Optional bounded per-channel intensity-odds gain from unsaturated overlap
     // means, using f(v)=255*g*v/(255+(g-1)*v) to preserve black/white without clipping.
@@ -35,20 +34,16 @@ struct BlendConfig {
     bool compensate_exposure = false;
 };
 
-// S6: feather weights are 8-neighbor chamfer distances (1, sqrt(2)) to the
-// nearest invalid pixel or canvas exterior. This approximates Euclidean distance
-// in two sequential passes. Exclusive A is copied exactly; exclusive B is copied
-// or exposure-transformed. Feather overlap is normalized by the sum of weights,
-// and background is black. Keeps canvas size.
-// Accepts any nonzero mask value as valid; validates all buffer dimensions.
-// MinimumErrorSeam optionally finds a low-color-difference path through overlap
-// by dynamic programming, oriented along the overlap's long direction relative
-// to source displacement. A path must span the overlap bounding box along the
-// chosen direction. Disconnected overlap may still contain such a path; neither
-// full overlap connectivity nor visual seam quality is tested. Only absence of
-// a complete path causes feather fallback with an info_message. This reduces
-// double exposure, but cannot correct parallax geometry. Logical failures return
-// valid=false; allocation exceptions may propagate.
+// S6: two-pass 8-neighbor chamfer weights (1, sqrt(2)) approximate distance to
+// invalid pixels or canvas exterior. Overlap weights are normalized; exclusive
+// A is copied, exclusive B is copied or exposure-transformed, background is black.
+// Keeps canvas size; any nonzero mask value is valid. Buffer dimensions are checked.
+// MinimumErrorSeam uses color-difference DP; mask-centroid displacement selects
+// its direction. A path must span the overlap bounding box in that direction.
+// Disconnected overlap can contain a complete path; connectivity and seam quality
+// are not certified. No complete path triggers feather fallback with info_message.
+// Seam cannot correct parallax. Logical failures return valid=false; allocation
+// exceptions may propagate.
 BlendResult blend(const warping::WarpResult& warped, const BlendConfig& config = BlendConfig{});
 
 }  // namespace stitching::blending

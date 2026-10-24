@@ -21,7 +21,7 @@
 
 namespace {
 
-// ---- 3x3 matrix helpers (row-major, indices [row*3+col]) ------------------
+// Row-major 3x3 matrices, indexed by row*3+col.
 using Mat3 = std::array<double, 9>;
 
 inline double det3(const Mat3& m) {
@@ -66,11 +66,8 @@ Mat3 matmul3(const Mat3& A, const Mat3& B) {
     return C;
 }
 
-// ---- Hartley normalization ------------------------------------------------
-// Given N 2-D points, compute the similarity transform T such that
-//   T * [x_i; y_i; 1]  has centroid at (0,0) and mean distance sqrt(2).
-// Returns false if points are degenerate (fewer than 1, or all coincident,
-// or any coordinate is non-finite).
+// Hartley normalization: T centers the points and gives mean distance sqrt(2).
+// Empty, coincident or non-finite point sets are rejected.
 struct NormResult {
     Mat3 T;
     std::vector<double> xs;  // Normalized x coordinates.
@@ -83,27 +80,24 @@ bool hartleyNormalize(const std::vector<double>& x,
     const std::size_t n = x.size();
     if (n == 0 || y.size() != n) return false;
 
-    // Verify finiteness before computing statistics.
     for (std::size_t i = 0; i < n; ++i)
         if (!std::isfinite(x[i]) || !std::isfinite(y[i])) return false;
 
-    // Centroid.
     double cx = 0.0, cy = 0.0;
     for (std::size_t i = 0; i < n; ++i) { cx += x[i]; cy += y[i]; }
     cx /= static_cast<double>(n);
     cy /= static_cast<double>(n);
     if (!std::isfinite(cx) || !std::isfinite(cy)) return false;
 
-    // Mean distance from centroid.
     double mean_dist = 0.0;
     for (std::size_t i = 0; i < n; ++i) {
         const double dx = x[i] - cx;
         const double dy = y[i] - cy;
-        mean_dist += std::hypot(dx, dy);  // std::hypot avoids overflow
+        mean_dist += std::hypot(dx, dy);  // Avoid intermediate squaring overflow.
     }
     mean_dist /= static_cast<double>(n);
 
-    // Avoid division by zero when all points are coincident.
+    // Reject coincident or nearly coincident points.
     constexpr double kEps = 1e-9;
     if (!std::isfinite(mean_dist) || mean_dist < kEps) return false;
 
@@ -128,18 +122,9 @@ bool hartleyNormalize(const std::vector<double>& x,
     return true;
 }
 
-// ---- 9x9 symmetric Jacobi eigendecomposition ------------------------------
-// We solve the DLT null-space by finding the eigenvector of A^T*A with the
-// smallest eigenvalue, using the classical Jacobi method.
-//
-// Implementation: Golub & Van Loan, "Matrix Computations" (4th ed.), Sec. 8.4.
-// Note: Using A^T*A squares the condition number. This is numerically adequate
-// for typical image-resolution data after Hartley normalization (mean_dist=sqrt(2)).
-// If conditioning is a concern, consider direct one-sided Jacobi SVD on A.
-//
-// Returns false when:
-//   - Jacobi fails to converge (max off-diagonal still large after kMaxSweeps).
-//   - Any eigenvalue or eigenvector entry is non-finite.
+// DLT uses the smallest-eigenvalue eigenvector of A^T*A. Forming A^T*A squares
+// the condition number; Hartley normalization reduces coordinate-scale effects.
+// Jacobi method: Golub & Van Loan, "Matrix Computations" (4th ed.), Sec. 8.4.
 
 using SymMat9 = std::array<double, 81>;
 
@@ -155,21 +140,16 @@ SymMat9 buildATA(const std::vector<std::array<double, 9>>& rows) {
     return M;
 }
 
-// Symmetric 9x9 Jacobi eigendecomposition.
-// On return:
-//   eigenvalues[i] = i-th eigenvalue (diagonal of A after diagonalization).
-//   V[:,i] = i-th eigenvector (columns of V, V stored row-major).
-// Returns false if convergence was not achieved or the result is non-finite.
+// V is row-major; column i is the eigenvector for eigenvalues[i].
+// Returns false on nonconvergence or non-finite eigenpairs.
 bool jacobiSym9(SymMat9 A, std::array<double, 9>& eigenvalues,
                 std::array<double, 81>& V) {
-    // Initialize V to identity.
     V.fill(0.0);
     for (int i = 0; i < 9; ++i) V[i * 9 + i] = 1.0;
 
     constexpr int    kMaxSweeps = 1000;
 
-    // Convergence tolerance: relative to the Frobenius norm of A.
-    // Compute initial Frobenius norm for scaling.
+    // Scale convergence tolerance by the initial Frobenius norm.
     double frob_sq = 0.0;
     for (int i = 0; i < 9; ++i)
         for (int j = 0; j < 9; ++j)
@@ -177,13 +157,11 @@ bool jacobiSym9(SymMat9 A, std::array<double, 9>& eigenvalues,
     const double kAbsTol = 1e-14 * std::sqrt(frob_sq) + 1e-30;
 
     for (int sweep = 0; sweep < kMaxSweeps; ++sweep) {
-        // Find off-diagonal element of maximum absolute value.
         double max_off = 0.0;
         for (int p = 0; p < 9; ++p)
             for (int q = p + 1; q < 9; ++q)
                 max_off = std::max(max_off, std::abs(A[p * 9 + q]));
         if (max_off < kAbsTol) {
-            // Converged. Check output is finite.
             for (int i = 0; i < 9; ++i) {
                 eigenvalues[i] = A[i * 9 + i];
                 if (!std::isfinite(eigenvalues[i])) return false;
@@ -204,7 +182,6 @@ bool jacobiSym9(SymMat9 A, std::array<double, 9>& eigenvalues,
                     : 1.0 / (tau - std::sqrt(1.0 + tau * tau));
                 const double c = 1.0 / std::sqrt(1.0 + t * t);
                 const double s = t * c;
-                // Update A.
                 A[p * 9 + p] -= t * apq;
                 A[q * 9 + q] += t * apq;
                 A[p * 9 + q] = 0.0;
@@ -218,7 +195,6 @@ bool jacobiSym9(SymMat9 A, std::array<double, 9>& eigenvalues,
                     A[r * 9 + q] = s * arp + c * arq;
                     A[q * 9 + r] = A[r * 9 + q];
                 }
-                // Update V (accumulate rotation).
                 for (int r = 0; r < 9; ++r) {
                     const double vrp = V[r * 9 + p];
                     const double vrq = V[r * 9 + q];
@@ -229,14 +205,10 @@ bool jacobiSym9(SymMat9 A, std::array<double, 9>& eigenvalues,
         }
     }
 
-    // Did not converge within kMaxSweeps sweeps.
     return false;
 }
 
-// ---- Normalized DLT for Homography estimation ----------------------------
-// Given N>=4 correspondences (xb[i],yb[i]) -> (xa[i],ya[i]),
-// estimates H_B_to_A such that xa_i ~ H * xb_i.
-// Returns true on success; H is written in row-major order.
+// Estimate row-major H_B_to_A from N>=4 correspondences B -> A.
 // Algorithm: Hartley (2004), Algorithm 4.2.
 bool normalizedDLT(const std::vector<double>& xa,
                    const std::vector<double>& ya,
@@ -247,16 +219,11 @@ bool normalizedDLT(const std::vector<double>& xa,
     if (n < 4 || xb.size() != n || ya.size() != n || yb.size() != n)
         return false;
 
-    // Hartley normalization - also validates finiteness internally.
     NormResult Na, Nb;
     if (!hartleyNormalize(xa, ya, Na)) return false;
     if (!hartleyNormalize(xb, yb, Nb)) return false;
 
-    // Build 2n x 9 DLT matrix A row-by-row.
-    // Using normalized coordinates Xa,Ya (image A) and Xb,Yb (image B).
-    // Each correspondence gives two rows (Hartley & Zisserman, p. 91):
-    //   Row 1: [0, 0, 0, -Xb, -Yb, -1, Ya*Xb, Ya*Yb, Ya]
-    //   Row 2: [Xb, Yb, 1, 0, 0, 0, -Xa*Xb, -Xa*Yb, -Xa]
+    // Two DLT rows per normalized correspondence B -> A (Hartley & Zisserman, p. 91).
     std::vector<std::array<double, 9>> rows;
     rows.reserve(2 * n);
     for (std::size_t i = 0; i < n; ++i) {
@@ -266,24 +233,18 @@ bool normalizedDLT(const std::vector<double>& xa,
         rows.push_back({Xb, Yb, 1.0, 0.0, 0.0, 0.0, -Xa * Xb, -Xa * Yb, -Xa});
     }
 
-    // Build A^T * A and find eigenvector of smallest eigenvalue.
     const SymMat9 ATA = buildATA(rows);
     std::array<double, 9> eigenvalues{};
     std::array<double, 81> V{};
     if (!jacobiSym9(ATA, eigenvalues, V)) return false;
 
-    // Find index of smallest eigenvalue.
-    // Small eigenvalues near 0 correspond to near-null vectors.
-    // If two smallest eigenvalues are nearly equal, the null-space is
-    // degenerate (rank deficiency >= 2), making H non-unique. Reject.
+    // The smallest eigenvalue identifies the DLT null vector.
     int min_idx = 0;
     for (int i = 1; i < 9; ++i)
         if (eigenvalues[i] < eigenvalues[min_idx]) min_idx = i;
 
-    // Rank deficiency check: ratio of two smallest eigenvalues relative to max eigenvalue.
-    // For a non-degenerate 4+ point configuration, rank(A) >= 8, so nullspace dim == 1.
-    // If both sorted_ev[0] and sorted_ev[1] are near zero relative to max_ev,
-    // the nullspace is at least 2-dimensional (degenerate collinear points, etc.).
+    // A unique H requires rank(A)>=8. Two near-zero eigenvalues relative to
+    // the largest indicate a nullspace of dimension >=2.
     std::array<double, 9> sorted_ev = eigenvalues;
     std::sort(sorted_ev.begin(), sorted_ev.end());
     const double max_ev = sorted_ev[8];
@@ -309,11 +270,9 @@ bool normalizedDLT(const std::vector<double>& xa,
         return false;  // Eigenpair residual too large
     }
 
-    // Extract the eigenvector corresponding to smallest eigenvalue.
     Mat3 Hn{};
     for (int i = 0; i < 9; ++i) Hn[i] = V[i * 9 + min_idx];
 
-    // Eigenvector must be finite (already checked in jacobiSym9, but be safe).
     for (double v : Hn)
         if (!std::isfinite(v)) return false;
 
@@ -323,8 +282,7 @@ bool normalizedDLT(const std::vector<double>& xa,
 
     H = matmul3(T_a_inv, matmul3(Hn, Nb.T));
 
-    // Scale to remove projective ambiguity.
-    // Prefer H[8] != 0; otherwise use largest element.
+    // Fix projective scale using H[8] when usable, otherwise the largest magnitude.
     constexpr double kEps = 1e-12;
     if (std::abs(H[8]) > kEps) {
         const double s = 1.0 / H[8];
@@ -336,17 +294,14 @@ bool normalizedDLT(const std::vector<double>& xa,
         for (double& v : H) v /= max_abs;
     }
 
-    // Final finiteness check.
     for (double v : H)
         if (!std::isfinite(v)) return false;
 
     return true;
 }
 
-// ---- Degeneracy check for a 4-point sample --------------------------------
-// Returns true if the four points in A or B are nearly collinear or contain
-// nearly coincident pairs.
-// Thresholds are relative to coordinate scale to handle varying image sizes.
+// Reject nearly coincident pairs or nearly collinear triples in either image.
+// Thresholds scale with the coordinate spread.
 bool isSampleDegenerate(const std::vector<double>& xa,
                         const std::vector<double>& ya,
                         const std::vector<double>& xb,
@@ -408,18 +363,15 @@ double computeCoordScale(const std::vector<double>& x,
     return std::max(rms, 1.0);  // Minimum scale of 1 pixel.
 }
 
-// Internal result type for homogeneous projection, separating validity from value.
-// This avoids any reliance on DBL_MAX arithmetic in RANSAC inlier classification.
+// Keep projection validity separate from numeric error sentinels during RANSAC.
 struct ProjResult {
     double x  = 0.0;
     double y  = 0.0;
     bool valid = false;
 };
 
-// Project point (xb, yb) through H_B_to_A with explicit validity tracking.
-// Returns {px, py, true} on success, {0,0,false} on degeneracy or overflow.
-// Pointwise validity only, not matrix invertibility. Scaling is subject to the
-// finite representation and normalization limits documented by project().
+// Project B -> A; pointwise validity does not imply matrix invertibility.
+// Scaling limits are the same as project(); invalid projections return valid=false.
 static ProjResult projectInternal(const Mat3& H, double xb, double yb) {
     if (!std::isfinite(xb) || !std::isfinite(yb)) return {};
 
@@ -431,15 +383,12 @@ static ProjResult projectInternal(const Mat3& H, double xb, double yb) {
     if (max_h < 1e-300) return {};
 
     const double inv_m = 1.0 / max_h;
-    // Normalized homogeneous row: h6, h7, h8 are the last row divided by max_h.
     const double h6 = H[6] * inv_m;
     const double h7 = H[7] * inv_m;
     const double h8 = H[8] * inv_m;
     const double w  = h6 * xb + h7 * yb + h8;
 
-    // Denominator tolerance: relative to the magnitude of its own terms.
-    // This correctly handles both tiny H (scale invariance) and large input coords.
-    // We compare |w| against a fraction of the largest term that contributed to it.
+    // Compare the denominator to its own term scale after normalizing H.
     const double denom_scale = std::max({std::abs(h6 * xb),
                                          std::abs(h7 * yb),
                                          std::abs(h8),
@@ -453,10 +402,8 @@ static ProjResult projectInternal(const Mat3& H, double xb, double yb) {
     return {px, py, true};
 }
 
-// Project point (xb, yb) in B through H_B_to_A and return reprojection error.
-// Returns std::numeric_limits<double>::max() on degeneracy or non-finite result.
-// The returned sentinel is guaranteed to be > any finite threshold (use the
-// explicit validity flag in projectInternal for inlier classification).
+// B -> A reprojection error; invalid errors return DBL_MAX. Inlier scoring
+// must use projection validity rather than thresholding this sentinel.
 double computeReprojectionError(const Mat3& H,
                                 double xb, double yb,
                                 double xa, double ya) {
@@ -465,12 +412,10 @@ double computeReprojectionError(const Mat3& H,
     const ProjResult pr = projectInternal(H, xb, yb);
     if (!pr.valid) return std::numeric_limits<double>::max();
     const double err = std::hypot(pr.x - xa, pr.y - ya);
-    // If somehow err itself overflowed (extremely large coords), signal invalid.
     if (!std::isfinite(err)) return std::numeric_limits<double>::max();
     return err;
 }
 
-// Validate HomographyConfig. Returns false and sets msg if invalid.
 bool validateHomographyConfig(const stitching::homography::HomographyConfig& cfg,
                               std::string& msg) {
     if (cfg.ransac_iterations <= 0) {
@@ -515,11 +460,8 @@ Point2d project(const std::array<double, 9>& H, double x, double y) {
     if (!std::isfinite(x) || !std::isfinite(y))
         throw std::domain_error("project(): Input coordinates are non-finite");
 
-    // Use projectInternal (defined in anonymous namespace) which correctly handles
-    // scale-invariance and denominator tolerance for large input coordinates.
     const ProjResult pr = projectInternal(H, x, y);
 
-    // Propagate specific failure modes as domain_error.
     if (!std::isfinite(H[0]) || !std::isfinite(H[1]) || !std::isfinite(H[2]) ||
         !std::isfinite(H[3]) || !std::isfinite(H[4]) || !std::isfinite(H[5]) ||
         !std::isfinite(H[6]) || !std::isfinite(H[7]) || !std::isfinite(H[8]))
@@ -550,7 +492,6 @@ HomographyResult estimate(
 
     HomographyResult result;
 
-    // --- Configuration validation ---
     {
         std::string cfg_err;
         if (!validateHomographyConfig(config, cfg_err)) {
@@ -562,7 +503,6 @@ HomographyResult estimate(
         }
     }
 
-    // --- Match count check ---
     if (matches.size() < 4) {
         result.valid          = false;
         result.failure_reason = FailureReason::TooFewMatches;
@@ -574,7 +514,6 @@ HomographyResult estimate(
 
     const std::size_t N = matches.size();
 
-    // --- Input correspondence validation and coordinate extraction ---
     std::vector<double> xa(N), ya(N), xb(N), yb(N);
     for (std::size_t k = 0; k < N; ++k) {
         const auto& m = matches[k];
@@ -595,7 +534,6 @@ HomographyResult estimate(
         const float raw_xb = desc_b.keypoints[m.index_b].x;
         const float raw_yb = desc_b.keypoints[m.index_b].y;
 
-        // Reject any correspondence with non-finite coordinates.
         if (!std::isfinite(raw_xa) || !std::isfinite(raw_ya) ||
             !std::isfinite(raw_xb) || !std::isfinite(raw_yb)) {
             result.valid          = false;
@@ -610,11 +548,9 @@ HomographyResult estimate(
         xb[k] = raw_xb; yb[k] = raw_yb;
     }
 
-    // Compute coordinate scales for scale-adaptive degeneracy detection.
     const double scale_a = computeCoordScale(xa, ya);
     const double scale_b = computeCoordScale(xb, yb);
 
-    // RANSAC.
     std::mt19937 rng(config.random_seed);
     std::uniform_int_distribution<std::size_t> dist(0, N - 1);
 
@@ -624,8 +560,7 @@ HomographyResult estimate(
     std::vector<bool> best_mask(N, false);
     bool any_hypothesis_succeeded = false;
 
-    // Reuse per-hypothesis storage; every sample coordinate is overwritten and
-    // every mask bit is reset before scoring. Solver-local buffers stay local.
+    // Reused scratch: overwrite all sample coordinates and clear the mask before scoring.
     std::vector<double> sxa(4), sya(4), sxb(4), syb(4);
     std::vector<bool> mask(N, false);
     for (int iter = 0; iter < config.ransac_iterations; ++iter) {
@@ -639,13 +574,11 @@ HomographyResult estimate(
             if (unique) ++s;
         }
 
-        // Scale-adaptive degeneracy check.
         if (isSampleDegenerate(xa, ya, xb, yb,
                                sample[0], sample[1], sample[2], sample[3],
                                scale_a, scale_b))
             continue;
 
-        // Build 4-point subsets for DLT.
         for (int s = 0; s < 4; ++s) {
             sxa[s] = xa[sample[s]]; sya[s] = ya[sample[s]];
             sxb[s] = xb[sample[s]]; syb[s] = yb[sample[s]];
@@ -654,20 +587,15 @@ HomographyResult estimate(
         Mat3 H_cand{};
         if (!normalizedDLT(sxa, sya, sxb, syb, H_cand)) continue;
 
-        // Evaluate hypothesis on all matches.
-        // IMPORTANT: Use projectInternal for inlier classification to avoid the
-        // DBL_MAX overflow bug: DBL_MAX*DBL_MAX = Inf, and Inf <= Inf = true,
-        // which would incorrectly count invalid projections as inliers when
-        // the threshold is very large. Direct error comparison avoids this.
+        // Check projection validity and compare unsquared errors: squaring DBL_MAX
+        // sentinels or extreme thresholds could accept invalid points via Inf <= Inf.
         int inlier_count = 0;
         double inlier_error_sum = 0.0;
         std::fill(mask.begin(), mask.end(), false);
 
         for (std::size_t k = 0; k < N; ++k) {
-            // projectInternal returns valid=false for degenerate/invalid projections.
-            // Only finite, valid projections can be inliers – regardless of threshold.
             const ProjResult pr = projectInternal(H_cand, xb[k], yb[k]);
-            if (!pr.valid) continue;  // invalid projection: never an inlier
+            if (!pr.valid) continue;
             const double err = std::hypot(pr.x - xa[k], pr.y - ya[k]);
             if (!std::isfinite(err)) continue;  // overflow guard
             if (err <= config.reprojection_threshold) {
@@ -744,7 +672,6 @@ HomographyResult estimate(
 
     if (solver_succeeded) {
         for (std::size_t k = 0; k < N; ++k) {
-            // Use projectInternal consistently with RANSAC evaluation loop.
             const ProjResult pr = projectInternal(H_refined, xb[k], yb[k]);
             if (!pr.valid) continue;
             const double err = std::hypot(pr.x - xa[k], pr.y - ya[k]);
@@ -758,17 +685,14 @@ HomographyResult estimate(
         }
     }
 
-    // Acceptance policy:
-    // Refined model must meet min_inliers and min_inlier_ratio.
-    // Prefer more inliers, or the same count with error within the tolerance below.
+    // Require confidence, then more inliers or equal count within the error tolerance.
     const double refined_ratio = static_cast<double>(refined_inlier_count) / static_cast<double>(N);
     const bool meets_confidence = (refined_inlier_count >= config.min_inliers) &&
                                   (config.min_inlier_ratio <= 0.0 || refined_ratio >= config.min_inlier_ratio);
 
     const bool ref_more_inliers = (refined_inlier_count > best_inlier_count);
-    // Floating-point keypoint coordinates (float) have discretization precision ~1e-4 px.
-    // When error sums are equal within this sub-pixel tolerance, the refined model
-    // (estimated from all consensus inliers) is accepted as the deterministic tie-breaker.
+    // At equal counts, allow 1e-4 px extra error per inlier for float
+    // keypoint quantization.
     const double kSubpixelTol = 1e-4 * static_cast<double>(best_inlier_count);
     const bool ref_same_inliers_lower_err =
         (refined_inlier_count == best_inlier_count &&
@@ -790,8 +714,7 @@ HomographyResult estimate(
         final_max_err      = refined_max_err;
         result.refinement_succeeded = true;
     } else {
-        // Fallback to the already accepted RANSAC hypothesis. Neither a solver
-        // failure nor rejection of the refinement changes success into failure.
+        // Failed or rejected refinement retains the already accepted RANSAC model.
         final_H            = best_H;
         final_mask         = best_mask;
         final_inlier_count = best_inlier_count;

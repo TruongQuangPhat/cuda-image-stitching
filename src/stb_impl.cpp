@@ -1,6 +1,5 @@
 // Authors: HUỲNH TẤN PHƯỚC (23120334), integration.
 // PPM reader/writer for V0; no stb implementation is bundled.
-// Compatibility with the course starter interface has not been verified.
 
 #include "common.h"
 #include <algorithm>

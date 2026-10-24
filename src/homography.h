@@ -17,9 +17,7 @@
 
 namespace stitching::homography {
 
-// Configuration for RANSAC-based Homography estimation.
-// All fields are validated at the start of estimate(); invalid config causes
-// estimate() to return valid=false with failure_reason=InvalidConfig.
+// estimate() validates all fields; invalid config returns valid=false / InvalidConfig.
 struct HomographyConfig {
     // Number of RANSAC iterations. Must be > 0.
     int ransac_iterations = 2000;
@@ -28,21 +26,17 @@ struct HomographyConfig {
     // Must be finite and > 0.
     double reprojection_threshold = 3.0;
 
-    // Minimum inliers required to accept a model. Must be >= 4.
-    // The DLT requires at least 4 non-degenerate correspondences.
+    // At least 4 inliers; DLT requires four non-degenerate correspondences.
     int min_inliers = 4;
 
-    // Minimum inlier ratio required to accept a model: num_inliers / matches.size().
-    // Range: [0.0, 1.0]. Default 0.0 disables the ratio gate (accepts any model
-    // with num_inliers >= min_inliers). For production stitching, setting this to
-    // e.g. 0.15 - 0.20 rejects accidental 4-point consensus in noisy match sets.
+    // Required num_inliers / matches.size(), in [0, 1]. Zero disables the ratio
+    // gate; min_inliers still applies and may admit a four-point consensus.
     double min_inlier_ratio = 0.0;
 
     // RNG seed for deterministic RANSAC with the same inputs and implementation.
     std::uint32_t random_seed = 0xC5C14120u;
 };
 
-// Failure diagnostics.
 enum class FailureReason {
     None,                // Success.
     InvalidConfig,       // HomographyConfig failed validation.
@@ -55,35 +49,26 @@ enum class FailureReason {
 
 std::string failureReasonToString(FailureReason r);
 
-// Estimated H_B_to_A (maps points in image B to image A):
-//   x_A ~ H_B_to_A * x_B
-//
-// H is a 3x3 matrix stored row-major: H[row*3 + col].
-// When valid == false, H is all-zeros and must NOT be used.
-// Inspect valid first: a default-constructed result is not an estimate even
-// though failure_reason starts at None. estimate() sets None only on success.
-// For a result returned by estimate():
-//   success: valid=true, failure_reason=None, H/mask/count/ratio/errors agree.
-//   failure: valid=false, failure_reason!=None, H remains zero. Only the
-//            diagnostic mask/count/ratio may describe a rejected hypothesis.
-// Consumers must gate on valid, never on mask population or message emptiness.
-// Stage 5 additionally checks invertibility, the projective horizon and canvas.
+// Row-major H_B_to_A: x_A ~ H_B_to_A * x_B, indexed by row*3+col.
+// estimate() success: valid=true, failure_reason=None, H/mask/count/ratio/errors agree.
+// estimate() failure: valid=false, failure_reason!=None, H stays zero; mask/count/ratio
+// may describe a rejected hypothesis. Never use H when valid=false.
+// A default result is also invalid, although its failure_reason starts at None.
+// Gate on valid, not mask population or message emptiness. Stage 5 additionally
+// checks invertibility, the projective horizon and canvas bounds.
 struct HomographyResult {
-    // The estimated Homography.
     std::array<double, 9> H{};
 
     bool           valid          = false;
     FailureReason  failure_reason = FailureReason::None;
 
-    // May be non-empty: either an error description (valid=false) or an info message
-    // (valid=true, e.g. when refinement fell back to RANSAC best H).
-    // Kept as one field for compatibility; an '(info)' message is not a failure.
+    // Errors when invalid, or optional '(info)' diagnostics on success (e.g. fallback).
+    // The shared field is retained for compatibility; nonempty does not imply failure.
     std::string    error_message;
 
-    // Inlier mask: one entry per input match (inlier_mask.size()==matches.size()).
-    // On success, computed with the RETURNED H. On TooFewInliers failure, this
-    // and the count/ratio describe the rejected best hypothesis; they do NOT
-    // validate the zero H. Other estimate() failures return an all-false mask.
+    // One entry per input match. On success, inliers use the returned H.
+    // TooFewInliers preserves mask/count/ratio of the rejected best hypothesis;
+    // other estimate() failures return an all-false mask.
     std::vector<bool> inlier_mask;
     int               num_inliers  = 0;   // count(inlier_mask == true)
     double            inlier_ratio = 0.0; // num_inliers / matches.size()
@@ -93,20 +78,13 @@ struct HomographyResult {
     double mean_reprojection_error = 0.0;
     double max_reprojection_error  = 0.0;
 
-    // True if inlier-refinement DLT succeeded AND the refined model was accepted
-    // as the final model (more inliers, or same count with error within tolerance).
-    // False if refinement failed or was rejected in favor of the RANSAC best hypothesis.
-    // A false value does not invalidate an accepted fallback H. Refinement is
-    // attempted only after RANSAC passes confidence; failure retains that H.
+    // Refinement is attempted after RANSAC passes confidence. True if accepted:
+    // more inliers, or equal count within error tolerance. Failed/rejected
+    // refinement retains the accepted RANSAC H without invalidating the result.
     bool refinement_succeeded = false;
 };
 
-// Estimate H_B_to_A from matched correspondences.
-//
-//   matches:        output of stitching::matching::match()
-//   desc_a, desc_b: same DescriptionResult objects passed to match()
-//   config:         algorithm parameters (validated on entry)
-//
+// Estimate H_B_to_A using matches and the same DescriptionResult objects passed to match().
 // Logical failures are communicated through valid / failure_reason. Allocation
 // exceptions may propagate. valid means the configured consensus policy passed;
 // it does not certify image-wide quality, coverage or a bounded warp canvas.
@@ -117,7 +95,7 @@ HomographyResult estimate(
     const HomographyConfig&             config = HomographyConfig{});
 
 // Project a 2-D point through H (performs homogeneous division).
-// Returns Euclidean coordinates at this point; does NOT check matrix
+// Returns Euclidean coordinates at this point; does not check matrix
 // invertibility. Even a singular matrix may project an individual point.
 // Scaling H preserves the result within floating-point precision when both
 // representations remain finite, max(abs(H)) >= 1e-300, and projection is valid.

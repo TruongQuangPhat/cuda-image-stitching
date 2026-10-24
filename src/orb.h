@@ -29,7 +29,7 @@ struct Keypoint {
 };
 
 struct Config {
-    int max_features = 2000;  // Across ALL pyramid levels, per input image.
+    int max_features = 2000;  // Across all pyramid levels, per input image.
     int n_levels = 8;
     float scale_factor = 1.2f;
     int fast_threshold = 20;  // Strict brightness difference (0..254).
@@ -50,7 +50,6 @@ struct DetectionResult {
 
 // A 256-bit binary rBRIEF descriptor (32 bytes).
 // Bit i is stored in bytes[i / 8], least-significant bit first.
-// Stage 3 can compare two descriptors using XOR + popcount.
 struct Descriptor {
     std::array<std::uint8_t, 32> bytes{};
 };
@@ -90,7 +89,7 @@ DescriptionResult describe(const DetectionResult& detection,
 
 // Call detect() and describe() separately when profiling each stage.
 // Uses the same Config for both stages. Checks description compatibility before
-// detection; then applies detect()'s image/config validation. Defaults are unchanged.
+// detection; then applies detect()'s image/config validation.
 DescriptionResult extract(const GrayImage& grayscale,
                           const Config& config = Config{});
 
