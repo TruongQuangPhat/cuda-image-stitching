@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <utility>
@@ -14,16 +15,15 @@
 
 namespace {
 
-// ---- Hamming popcount on individual uint8 blocks --------------------------
-// Uses the compiler builtin when available (GCC/Clang).
-// No SIMD, no manual bit tricks.
-inline int popcount8(std::uint8_t v) {
+// Scalar word popcount. The builtin targets the compiler's configured ISA;
+// no extra CPU feature flags or alignment assumptions are required.
+inline int popcount64(std::uint64_t v) {
 #if defined(__GNUC__) || defined(__clang__)
-    return __builtin_popcount(static_cast<unsigned>(v));
+    return __builtin_popcountll(static_cast<unsigned long long>(v));
 #else
     // Kernighan's bit-counting algorithm - portable fallback.
     int count = 0;
-    for (; v; v &= static_cast<std::uint8_t>(v - 1u)) ++count;
+    for (; v; v &= v - 1u) ++count;
     return count;
 #endif
 }
@@ -52,8 +52,13 @@ namespace stitching::matching {
 
 int hammingDistance(const orb::Descriptor& a, const orb::Descriptor& b) {
     int dist = 0;
-    for (std::size_t i = 0; i < 32; ++i)
-        dist += popcount8(static_cast<std::uint8_t>(a.bytes[i] ^ b.bytes[i]));
+    for (std::size_t i = 0; i < a.bytes.size(); i += sizeof(std::uint64_t)) {
+        std::uint64_t word_a, word_b;
+        // Descriptor alignment is one byte; memcpy also avoids aliasing UB.
+        std::memcpy(&word_a, a.bytes.data() + i, sizeof(word_a));
+        std::memcpy(&word_b, b.bytes.data() + i, sizeof(word_b));
+        dist += popcount64(word_a ^ word_b);
+    }
     return dist;
 }
 
@@ -96,9 +101,6 @@ MatchResult match(const orb::DescriptionResult& desc_a,
     result.matches.reserve(na);
 
     // Forward matching: A -> B (find 2 nearest neighbors in B for each in A).
-    // Stores best-match index in B for each descriptor in A.
-    std::vector<std::size_t> fwd_best(na, 0);
-
     for (std::size_t i = 0; i < na; ++i) {
         int d1 = std::numeric_limits<int>::max();
         int d2 = std::numeric_limits<int>::max();
@@ -115,8 +117,6 @@ MatchResult match(const orb::DescriptionResult& desc_a,
                 d2 = d;
             }
         }
-
-        fwd_best[i] = j1;
 
         // Ratio test: d1 < ratio_threshold * d2.
         // Guard against d2 == 0 (ambiguous match - both nearest neighbors identical).

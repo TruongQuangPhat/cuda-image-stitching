@@ -365,22 +365,23 @@ DetectionResult detect(const GrayImage& grayscale, const Config& config) {
     }
 
     // Redistribute unused quota if a pyramid level did not have enough corners.
-    std::vector<Keypoint> extras;
-    std::size_t allocated = 0;
-    for (int level = 0; level < num_levels; ++level) {
-        allocated += taken[level];
-        extras.insert(extras.end(), candidates[level].begin() +
-                      static_cast<std::ptrdiff_t>(taken[level]), candidates[level].end());
-    }
-    std::sort(extras.begin(), extras.end(),
-              [](const Keypoint& a, const Keypoint& b) {
-                  if (a.response != b.response) return a.response > b.response;
-                  if (a.octave != b.octave) return a.octave < b.octave;
-                  if (a.y != b.y) return a.y < b.y;
-                  return a.x < b.x;
-              });
+    const std::size_t allocated = std::accumulate(taken.begin(), taken.end(), std::size_t{0});
     const std::size_t deficit = static_cast<std::size_t>(config.max_features) - allocated;
-    extras.resize(std::min(deficit, extras.size()));
+    std::vector<Keypoint> extras;
+    if (deficit != 0) {
+        for (int level = 0; level < num_levels; ++level) {
+            extras.insert(extras.end(), candidates[level].begin() +
+                          static_cast<std::ptrdiff_t>(taken[level]), candidates[level].end());
+        }
+        std::sort(extras.begin(), extras.end(),
+                  [](const Keypoint& a, const Keypoint& b) {
+                      if (a.response != b.response) return a.response > b.response;
+                      if (a.octave != b.octave) return a.octave < b.octave;
+                      if (a.y != b.y) return a.y < b.y;
+                      return a.x < b.x;
+                  });
+        extras.resize(std::min(deficit, extras.size()));
+    }
 
     output.keypoints.reserve(allocated + extras.size());
     for (int level = 0; level < num_levels; ++level) {

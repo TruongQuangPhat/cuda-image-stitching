@@ -624,6 +624,10 @@ HomographyResult estimate(
     std::vector<bool> best_mask(N, false);
     bool any_hypothesis_succeeded = false;
 
+    // Reuse per-hypothesis storage; every sample coordinate is overwritten and
+    // every mask bit is reset before scoring. Solver-local buffers stay local.
+    std::vector<double> sxa(4), sya(4), sxb(4), syb(4);
+    std::vector<bool> mask(N, false);
     for (int iter = 0; iter < config.ransac_iterations; ++iter) {
         // Sample 4 distinct indices.
         std::array<std::size_t, 4> sample{};
@@ -642,7 +646,6 @@ HomographyResult estimate(
             continue;
 
         // Build 4-point subsets for DLT.
-        std::vector<double> sxa(4), sya(4), sxb(4), syb(4);
         for (int s = 0; s < 4; ++s) {
             sxa[s] = xa[sample[s]]; sya[s] = ya[sample[s]];
             sxb[s] = xb[sample[s]]; syb[s] = yb[sample[s]];
@@ -658,7 +661,7 @@ HomographyResult estimate(
         // the threshold is very large. Direct error comparison avoids this.
         int inlier_count = 0;
         double inlier_error_sum = 0.0;
-        std::vector<bool> mask(N, false);
+        std::fill(mask.begin(), mask.end(), false);
 
         for (std::size_t k = 0; k < N; ++k) {
             // projectInternal returns valid=false for degenerate/invalid projections.
