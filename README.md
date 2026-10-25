@@ -1,4 +1,4 @@
-# Ghép ảnh panorama — C++17 baseline và kế hoạch CUDA
+# CUDA Image Stitching
 
 <p align="center">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-00599C?logo=c%2B%2B&logoColor=white">
