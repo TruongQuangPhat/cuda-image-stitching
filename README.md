@@ -44,6 +44,8 @@ Phần hình học kiểm tra bốn homography tổng hợp (tịnh tiến, xoay
 
 Feather là baseline để phân tích CPU/GPU. Chế độ seam tìm đường nối có sai khác màu thấp và bù sáng RGB trong giới hạn 0,5–2; nếu không tìm được đường nối liên tục, chương trình dùng feather dự phòng. Giới hạn Amdahl trong notebook là ước lượng lý thuyết, không phải speedup CUDA đã đo.
 
+Bảng Feather/Seam tổng hợp thời gian toàn pipeline của bốn cặp ảnh ở ba kích thước trên; cột cuối cho biết số cấu hình áp dụng được seam. Hình so sánh trực quan dùng cặp CMU0 khó với ảnh đầu vào rộng 800 px.
+
 ## Dataset
 
 Dự án dùng bốn cặp ảnh: CMU0 chuẩn, CMU1 chuẩn, CMU2 chuẩn và CMU0 khó. Mỗi cặp có ba kích thước đã chuẩn bị. Metadata nằm tại **dataset/metadata.csv** sau khi giải nén.
@@ -73,7 +75,7 @@ Notebook xuất **Group09_Midterm.zip** ở cuối lần chạy. Nếu chưa có
 3. Chọn **Runtime → Run all** và chờ các ô chạy xong.
 4. Ô cuối kiểm tra tính nhất quán, lưu notebook đã chạy và tạo ZIP kết quả mới để tải xuống.
 
-Gói ZIP kết quả chứa notebook có output, mã nguồn **src/** và ảnh thử **examples/campus.png**. Mục cuối notebook cắt ảnh này thành hai crop có overlap rồi ghép bằng V0. Các CSV, JSON và ảnh chi tiết được lưu riêng dưới **output/v0/**; phép thử ảnh cắt nằm trong **output/v0/overlap_demo/**.
+Gói ZIP kết quả chứa notebook có output, mã nguồn **src/** và ảnh thử **examples/campus.png**. Mục 7 của notebook cắt ảnh này thành hai phần trái–phải có overlap rồi ghép theo chiều ngang bằng V0. Các CSV, JSON và ảnh chi tiết được lưu riêng dưới **output/v0/**; phép thử ảnh cắt nằm trong **output/v0/overlap_demo/**.
 
 ### Máy cá nhân
 
@@ -175,7 +177,7 @@ src/
 
 Các record mới thêm `source_hash_normalization = "CRLF-to-LF-only-v1"`. Record cũ không có các field bổ sung vẫn được đọc theo raw hashes. Kiểm tra cuối lần chạy luôn yêu cầu **raw hashes khớp**; normalized hashes không cho phép bỏ qua thay đổi bytes sau khi đo. Normalized equality chỉ giải thích khác biệt line endings theo quy tắc trên, không chứng minh hai implementation tương đương về thuật toán.
 
-Notebook đang lưu trong Git là bằng chứng của lần chạy lịch sử và có thể khác source hiện tại sau hardening. Giữ nguyên outputs/hashes gốc; không chép hashes mới vào kết quả cũ. Khi chốt source để nộp, cần chạy lại notebook top-to-bottom từ đúng `src/` đó để tạo kết quả và provenance mới. Các diễn đạt cũ trong notebook về starter/sites cũng cần được cập nhật trong lần tái tạo báo cáo được cho phép, không sửa ngược bằng chứng lịch sử.
+Notebook đang lưu trong Git là bằng chứng của lần chạy lịch sử và có thể khác source hiện tại sau hardening. Giữ nguyên outputs/hashes gốc; không chép hashes mới vào kết quả cũ. Khi chốt source để nộp, cần chạy lại notebook top-to-bottom từ đúng `src/` đó để tạo kết quả và provenance mới. Phần diễn đạt về starter/sites đã được chỉnh lại trong notebook. Đợt chỉnh sửa Markdown này không chạy lại benchmark, không tạo số liệu hay bằng chứng thực nghiệm mới.
 
 ## Nhóm
 
